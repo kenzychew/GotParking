@@ -42,7 +42,7 @@ class ReadDeps:
     db: SupabaseREST
 
 
-def _unavailable_response() -> HttpResponse:
+def unavailable_response() -> HttpResponse:
     """The typed 503 for an empty table or an unreachable Supabase.
 
     Never a raw 500 -- see the design doc's Failure Modes registry, public
@@ -76,7 +76,7 @@ def handle_forecast_read(deps: ReadDeps) -> HttpResponse:
 
         if not forecast_result.rows:
             logger.warning("forecast read: carpark_forecast table is empty")
-            return _unavailable_response()
+            return unavailable_response()
 
         name_by_id = {row["carpark_id"]: row["name"] for row in carparks_result.rows}
 
@@ -110,4 +110,4 @@ def handle_forecast_read(deps: ReadDeps) -> HttpResponse:
         return HttpResponse(200, body, headers)
     except Exception:
         logger.exception("forecast read: failed to build response")
-        return _unavailable_response()
+        return unavailable_response()

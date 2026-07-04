@@ -129,6 +129,12 @@ class FakeSupabaseDB:
             raise value
         return value
 
+    def close(self) -> None:
+        """No-op, matching SupabaseREST.close()'s interface for callers
+        (e.g. the Vercel handler files) that unconditionally close the
+        client in a `finally` block.
+        """
+
 
 class RecordingFailPing:
     """A `fail_ping` fake that records every (reason) it was called with."""
