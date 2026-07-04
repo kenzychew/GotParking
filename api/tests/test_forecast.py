@@ -18,7 +18,10 @@ CARPARKS = [
 ]
 
 
-def _db(forecast_rows: list[dict[str, object]], carparks_rows: list[dict[str, object]] | None = None) -> FakeSupabaseDB:
+def _db(
+    forecast_rows: list[dict[str, object]],
+    carparks_rows: list[dict[str, object]] | None = None,
+) -> FakeSupabaseDB:
     return FakeSupabaseDB(
         tables={
             "carpark_forecast": forecast_rows,

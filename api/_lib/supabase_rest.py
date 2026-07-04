@@ -19,7 +19,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 import httpx
 
@@ -94,6 +94,58 @@ def _parse_content_range(header_value: str | None) -> int | None:
         return int(total)
     except ValueError:
         return None
+
+
+@runtime_checkable
+class SupabaseClient(Protocol):
+    """Structural interface for a Supabase client.
+
+    :class:`SupabaseREST` (production) and test doubles such as
+    ``tests.fakes.FakeSupabaseDB`` both satisfy this shape. Business-logic
+    modules (``batch_logic.py``, ``read_logic.py``) declare their injected
+    dependency against this narrow Protocol rather than the concrete
+    ``SupabaseREST`` class, so tests can supply a lightweight in-memory
+    fake without subclassing or monkeypatching the real HTTP client --
+    honest dependency injection against an interface, not a concrete type.
+    """
+
+    def select(
+        self,
+        table: str,
+        *,
+        params: dict[str, Any] | None = None,
+        prefer_count: bool = False,
+    ) -> SelectResult:
+        """See :meth:`SupabaseREST.select`."""
+        ...
+
+    def select_all(
+        self,
+        table: str,
+        *,
+        params: dict[str, Any] | None = None,
+        page_size: int = POSTGREST_PAGE_SIZE,
+    ) -> list[dict[str, Any]]:
+        """See :meth:`SupabaseREST.select_all`."""
+        ...
+
+    def upsert(
+        self,
+        table: str,
+        rows: list[dict[str, Any]],
+        *,
+        on_conflict: str | None = None,
+    ) -> None:
+        """See :meth:`SupabaseREST.upsert`."""
+        ...
+
+    def download_storage_object(self, bucket: str, path: str) -> bytes:
+        """See :meth:`SupabaseREST.download_storage_object`."""
+        ...
+
+    def close(self) -> None:
+        """See :meth:`SupabaseREST.close`."""
+        ...
 
 
 class SupabaseREST:

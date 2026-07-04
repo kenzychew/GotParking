@@ -37,7 +37,7 @@ def _make_handler_instance(headers: dict[str, str]) -> batch_predict.handler:
     instance.protocol_version = "HTTP/1.1"
     instance.requestline = "POST /api/batch_predict HTTP/1.1"
     instance.command = "POST"
-    instance.headers = headers
+    instance.headers = headers  # type: ignore[assignment]  # plain dict stands in for HTTPMessage
     instance.rfile = io.BytesIO(b"")
     instance.wfile = io.BytesIO()
     return instance
@@ -75,7 +75,7 @@ class TestDoPost:
         instance = _make_handler_instance({"x-batch-secret": "test-secret"})
         instance.do_POST()
 
-        status_line, body = _split_response(instance.wfile.getvalue())
+        status_line, body = _split_response(instance.wfile.getvalue())  # type: ignore[attr-defined]
         assert b"200" in status_line
         assert body == {"computed": 0, "generated_at": "2026-07-05T00:00:00+00:00"}
 
@@ -95,7 +95,7 @@ class TestDoPost:
         instance = _make_handler_instance({"x-batch-secret": "wrong-secret"})
         instance.do_POST()
 
-        status_line, body = _split_response(instance.wfile.getvalue())
+        status_line, body = _split_response(instance.wfile.getvalue())  # type: ignore[attr-defined]
         assert b"401" in status_line
         assert body == {"error": "unauthorized"}
         assert db.select_calls == []  # no compute happened
@@ -111,6 +111,6 @@ class TestDoPost:
         instance = _make_handler_instance({"x-batch-secret": "whatever"})
         instance.do_POST()  # must not raise
 
-        status_line, body = _split_response(instance.wfile.getvalue())
+        status_line, body = _split_response(instance.wfile.getvalue())  # type: ignore[attr-defined]
         assert b"500" in status_line
         assert body["error"] == "internal_error"

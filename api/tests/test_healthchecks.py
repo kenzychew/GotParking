@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import httpx
 import pytest
 
 from _lib.healthchecks import fire_fail_ping
+from tests.conftest import RoutedTransportFactory, SequentialTransportFactory
 
 
 class TestFireFailPing:
@@ -17,7 +16,7 @@ class TestFireFailPing:
     def test_skips_silently_when_url_unset(
         self,
         missing_url: str | None,
-        make_routed_transport: Callable[[Callable[[httpx.Request], httpx.Response]], httpx.MockTransport],
+        make_routed_transport: RoutedTransportFactory,
     ) -> None:
         calls: list[httpx.Request] = []
 
@@ -25,13 +24,14 @@ class TestFireFailPing:
             calls.append(request)
             return httpx.Response(200)
 
-        fire_fail_ping(missing_url, "MODEL_ARTIFACT_MISSING", transport=make_routed_transport(handler))
+        transport = make_routed_transport(handler)
+        fire_fail_ping(missing_url, "MODEL_ARTIFACT_MISSING", transport=transport)
 
         assert calls == []  # never attempted a request
 
     def test_posts_reason_as_body_to_fail_path(
         self,
-        make_routed_transport: Callable[[Callable[[httpx.Request], httpx.Response]], httpx.MockTransport],
+        make_routed_transport: RoutedTransportFactory,
     ) -> None:
         captured: dict[str, object] = {}
 
@@ -53,7 +53,7 @@ class TestFireFailPing:
 
     def test_strips_trailing_slash_before_appending_fail(
         self,
-        make_routed_transport: Callable[[Callable[[httpx.Request], httpx.Response]], httpx.MockTransport],
+        make_routed_transport: RoutedTransportFactory,
     ) -> None:
         captured_urls: list[str] = []
 
@@ -71,7 +71,7 @@ class TestFireFailPing:
 
     def test_network_failure_is_swallowed_not_raised(
         self,
-        make_sequential_transport: Callable[[list[BaseException]], httpx.MockTransport],
+        make_sequential_transport: SequentialTransportFactory,
     ) -> None:
         transport = make_sequential_transport([httpx.ConnectError("unreachable")])
 
@@ -80,7 +80,7 @@ class TestFireFailPing:
 
     def test_error_status_response_is_swallowed_not_raised(
         self,
-        make_routed_transport: Callable[[Callable[[httpx.Request], httpx.Response]], httpx.MockTransport],
+        make_routed_transport: RoutedTransportFactory,
     ) -> None:
         # fire_fail_ping does not call raise_for_status(), so a non-2xx
         # response from healthchecks.io itself must not raise either.

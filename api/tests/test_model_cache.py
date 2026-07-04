@@ -83,7 +83,9 @@ class TestModelCacheGet:
         with pytest.raises(ModelLoadError):
             cache.get("v2", lambda: "corrupt")
 
-        version, booster = cache.last_known_good()
+        result = cache.last_known_good()
+        assert result is not None
+        version, booster = result
         assert version == "v1"
         assert booster is not None
 
@@ -122,7 +124,9 @@ class TestLastKnownGood:
         cache.get("v1", _FakeBoosterFetchCounter(tiny_lightgbm_model_str))
         cache.get("v2", _FakeBoosterFetchCounter(tiny_lightgbm_model_str))
 
-        version, _ = cache.last_known_good()
+        result = cache.last_known_good()
+        assert result is not None
+        version, _ = result
 
         assert version == "v2"
 
@@ -136,7 +140,9 @@ class TestLastKnownGood:
 
         cache.get("v1", fetch)  # cache hit on the older version
 
-        version, _ = cache.last_known_good()
+        result = cache.last_known_good()
+        assert result is not None
+        version, _ = result
         assert version == "v1"
 
 
@@ -156,7 +162,11 @@ class TestRealBoosterPredicts:
 
         # [dow, slot_of_day, is_holiday, lots_now, lots_15m_ago, lots_30m_ago, lots_60m_ago]
         features = np.array([[2, 40, 0, 120, 118, 115, 110]], dtype=np.float64)
-        prediction = booster.predict(features)
+        # Booster.predict()'s declared return type is a broad union
+        # (ndarray | sparse matrix | list); a dense array input always
+        # yields a dense ndarray back, and np.asarray() makes that concrete
+        # for the type checker too (a no-op at runtime in that case).
+        prediction = np.asarray(booster.predict(features))
 
         assert prediction.shape == (1,)
         assert np.isfinite(prediction[0])

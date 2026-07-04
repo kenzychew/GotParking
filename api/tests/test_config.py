@@ -17,11 +17,11 @@ def _set_env(monkeypatch: pytest.MonkeyPatch, **overrides: str | None) -> None:
     for key, value in REQUIRED_ENV.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv("HEALTHCHECKS_TRAINING_PING_URL", raising=False)
-    for key, value in overrides.items():
-        if value is None:
-            monkeypatch.delenv(key, raising=False)
+    for override_key, override_value in overrides.items():
+        if override_value is None:
+            monkeypatch.delenv(override_key, raising=False)
         else:
-            monkeypatch.setenv(key, value)
+            monkeypatch.setenv(override_key, override_value)
 
 
 class TestLoadSettings:

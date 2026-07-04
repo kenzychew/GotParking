@@ -28,7 +28,6 @@ from _lib.batch_logic import (
     run_batch_predict,
 )
 from _lib.model_cache import ModelCache
-from _lib.tiers import TIER_VERY_LIMITED
 from tests.fakes import FakeSupabaseDB, RecordingFailPing, make_clock, make_history_rows
 
 SECRET = "test-shared-secret"
@@ -125,25 +124,30 @@ class TestMixedStates:
         history: list[dict[str, object]] = []
         # Carpark "1": cold_start via too few samples (5 < 10).
         history += make_history_rows(
-            "1", 5, NOW - timedelta(days=100), NOW - timedelta(minutes=5), capacity=50, live_lots=42
+            "1", 5, NOW - timedelta(days=100), NOW - timedelta(minutes=5),
+            capacity=50, live_lots=42,
         )
         # Carpark "2": cold_start via first sample too recent (<72h old),
         # despite having plenty of samples.
         history += make_history_rows(
-            "2", 50, NOW - timedelta(hours=10), NOW - timedelta(minutes=5), capacity=80, live_lots=60
+            "2", 50, NOW - timedelta(hours=10), NOW - timedelta(minutes=5),
+            capacity=80, live_lots=60,
         )
         # Carpark "3": eligible for ml (old history, fresh+complete momentum).
         history += make_history_rows(
-            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5), capacity=300, live_lots=200
+            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
+            capacity=300, live_lots=200,
         )
         # Carpark "11": baseline via STALE momentum; baseline cell present.
         history += make_history_rows(
-            "11", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5), capacity=150, live_lots=90
+            "11", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
+            capacity=150, live_lots=90,
         )
         # Carpark "13": baseline via MISSING momentum row + missing baseline
         # cell -> persistence (live_lots) fallback.
         history += make_history_rows(
-            "13", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5), capacity=140, live_lots=10
+            "13", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
+            capacity=140, live_lots=10,
         )
 
         return FakeSupabaseDB(
@@ -237,7 +241,8 @@ class TestStaleMomentum:
         self, tiny_lightgbm_model_str: str
     ) -> None:
         history = make_history_rows(
-            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5), capacity=300, live_lots=200
+            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
+            capacity=300, live_lots=200,
         )
         db = FakeSupabaseDB(
             tables={
@@ -279,7 +284,8 @@ class TestStaleMomentum:
         """updated_at exactly 15 minutes old is NOT stale (boundary is
         "older than" 15 min, not "15 min or older")."""
         history = make_history_rows(
-            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5), capacity=300, live_lots=200
+            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
+            capacity=300, live_lots=200,
         )
         db = FakeSupabaseDB(
             tables={
@@ -312,7 +318,8 @@ class TestStaleMomentum:
         """A fresh but incomplete momentum row (missing a lag reading) is
         treated the same as stale -- never fed partially-null features."""
         history = make_history_rows(
-            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5), capacity=300, live_lots=200
+            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
+            capacity=300, live_lots=200,
         )
         db = FakeSupabaseDB(
             tables={
@@ -352,9 +359,12 @@ class TestModelArtifactFallback:
     rows + /fail ping, table never empty.
     """
 
-    def _single_ml_eligible_db(self, active_version: str, storage: dict[str, object]) -> FakeSupabaseDB:
+    def _single_ml_eligible_db(
+        self, active_version: str, storage: dict[str, object]
+    ) -> FakeSupabaseDB:
         history = make_history_rows(
-            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5), capacity=300, live_lots=200
+            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
+            capacity=300, live_lots=200,
         )
         return FakeSupabaseDB(
             tables={
@@ -449,7 +459,8 @@ class TestModelVersionReload:
 
     def _db_with_version(self, version: str, model_bytes: bytes) -> FakeSupabaseDB:
         history = make_history_rows(
-            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5), capacity=300, live_lots=200
+            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
+            capacity=300, live_lots=200,
         )
         return FakeSupabaseDB(
             tables={
@@ -558,7 +569,8 @@ class TestNoActiveModel:
 
     def test_null_active_model_version_serves_baseline_for_all(self) -> None:
         history = make_history_rows(
-            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5), capacity=300, live_lots=200
+            "3", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
+            capacity=300, live_lots=200,
         )
         db = FakeSupabaseDB(
             tables={

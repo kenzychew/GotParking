@@ -14,6 +14,16 @@ import httpx
 import numpy as np
 import pytest
 
+#: Type aliases for the two transport-factory fixtures below, so test files
+#: importing them for type hints don't need to repeat the full nested
+#: Callable[...] spelling (and stay under the 100-char line limit).
+SequentialTransportFactory = Callable[
+    [Sequence[httpx.Response | BaseException]], httpx.MockTransport
+]
+RoutedTransportFactory = Callable[
+    [Callable[[httpx.Request], httpx.Response]], httpx.MockTransport
+]
+
 
 def _sequential_handler(
     responses: Sequence[httpx.Response | BaseException],
@@ -42,9 +52,7 @@ def _sequential_handler(
 
 
 @pytest.fixture
-def make_sequential_transport() -> (
-    Callable[[Sequence[httpx.Response | BaseException]], httpx.MockTransport]
-):
+def make_sequential_transport() -> SequentialTransportFactory:
     """Factory fixture: build a MockTransport that replays a fixed sequence
     of responses (or raised exceptions), one per call, in order.
     """
@@ -56,7 +64,7 @@ def make_sequential_transport() -> (
 
 
 @pytest.fixture
-def make_routed_transport() -> Callable[[Callable[[httpx.Request], httpx.Response]], httpx.MockTransport]:
+def make_routed_transport() -> RoutedTransportFactory:
     """Factory fixture: build a MockTransport from an arbitrary handler.
 
     Use this (instead of `make_sequential_transport`) when a test needs to

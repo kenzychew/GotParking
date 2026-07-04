@@ -29,7 +29,7 @@ def _make_handler_instance() -> forecast.handler:
     instance.protocol_version = "HTTP/1.1"
     instance.requestline = "GET /api/forecast HTTP/1.1"
     instance.command = "GET"
-    instance.headers = {}
+    instance.headers = {}  # type: ignore[assignment]  # plain dict stands in for HTTPMessage
     instance.rfile = io.BytesIO(b"")
     instance.wfile = io.BytesIO()
     return instance
@@ -71,16 +71,17 @@ class TestDoGet:
         # then constructs a SupabaseREST directly, so the simplest seam is
         # to monkeypatch SupabaseREST's constructor call site indirectly
         # via load_settings + a stubbed SupabaseREST class.
-        monkeypatch.setattr(
-            forecast, "load_settings",
-            lambda: type("S", (), {"supabase_url": "https://x", "supabase_service_role_key": "k"})(),
-        )
+        fake_settings = type(
+            "S", (), {"supabase_url": "https://x", "supabase_service_role_key": "k"}
+        )()
+        monkeypatch.setattr(forecast, "load_settings", lambda: fake_settings)
         monkeypatch.setattr(forecast, "SupabaseREST", lambda *a, **k: db)
 
         instance = _make_handler_instance()
         instance.do_GET()
 
-        status_line, body, headers_blob = _split_response(instance.wfile.getvalue())
+        raw = instance.wfile.getvalue()  # type: ignore[attr-defined]
+        status_line, body, headers_blob = _split_response(raw)
         assert b"200" in status_line
         assert body["generated_at"] == "2026-07-05T00:00:00+00:00"
         assert b"Cache-Control: public, s-maxage=90, stale-while-revalidate=60" in headers_blob
@@ -96,7 +97,8 @@ class TestDoGet:
         instance = _make_handler_instance()
         instance.do_GET()  # must not raise
 
-        status_line, body, _ = _split_response(instance.wfile.getvalue())
+        raw = instance.wfile.getvalue()  # type: ignore[attr-defined]
+        status_line, body, _ = _split_response(raw)
         assert b"503" in status_line
         assert body == {
             "error": "predictions_unavailable",

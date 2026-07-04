@@ -53,7 +53,10 @@ class TestGetHeader:
         message = Message()
         message["X-Batch-Secret"] = "abc123"
 
-        assert get_header(message, "x-batch-secret") == "abc123"
+        # Message is structurally compatible (.items() works the same way)
+        # but isn't nominally a Mapping[str, str] -- deliberate, see comment
+        # above.
+        assert get_header(message, "x-batch-secret") == "abc123"  # type: ignore[arg-type]
 
 
 class TestWriteHttpResponse:
@@ -63,7 +66,11 @@ class TestWriteHttpResponse:
         handler = _FakeHandler()
         response = HttpResponse(200, {"computed": 10, "generated_at": "2026-07-05T00:00:00+00:00"})
 
-        write_http_response(handler, response)
+        # _FakeHandler deliberately duck-types only the write-side methods
+        # write_http_response actually calls, rather than subclassing the
+        # real BaseHTTPRequestHandler (whose __init__ reads from a live
+        # socket and can't be constructed standalone in a unit test).
+        write_http_response(handler, response)  # type: ignore[arg-type]
 
         assert handler.status == 200
         assert handler.ended is True
@@ -74,7 +81,7 @@ class TestWriteHttpResponse:
 
     def test_defaults_content_type_to_json(self) -> None:
         handler = _FakeHandler()
-        write_http_response(handler, HttpResponse(200, {}))
+        write_http_response(handler, HttpResponse(200, {}))  # type: ignore[arg-type]
 
         header_dict = dict(handler.headers_sent)
         assert header_dict["Content-Type"] == "application/json"
@@ -87,7 +94,7 @@ class TestWriteHttpResponse:
             headers={"Cache-Control": "public, s-maxage=90, stale-while-revalidate=60"},
         )
 
-        write_http_response(handler, response)
+        write_http_response(handler, response)  # type: ignore[arg-type]
 
         header_dict = dict(handler.headers_sent)
         assert header_dict["Cache-Control"] == "public, s-maxage=90, stale-while-revalidate=60"
@@ -95,7 +102,7 @@ class TestWriteHttpResponse:
 
     def test_sends_content_length_matching_body(self) -> None:
         handler = _FakeHandler()
-        write_http_response(handler, HttpResponse(200, {"a": "b"}))
+        write_http_response(handler, HttpResponse(200, {"a": "b"}))  # type: ignore[arg-type]
 
         header_dict = dict(handler.headers_sent)
         expected_length = len(json.dumps({"a": "b"}).encode("utf-8"))

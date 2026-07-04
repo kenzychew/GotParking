@@ -24,6 +24,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+import lightgbm
 import numpy as np
 
 from _lib.config import (
@@ -39,7 +40,7 @@ from _lib.features import build_feature_vector
 from _lib.http_helpers import HttpResponse, get_header
 from _lib.model_cache import ModelCache, ModelLoadError
 from _lib.sg_time import sgt_parts
-from _lib.supabase_rest import SupabaseREST, SupabaseUnavailableError, parse_timestamp
+from _lib.supabase_rest import SupabaseClient, SupabaseUnavailableError, parse_timestamp
 from _lib.tiers import compute_tier
 
 logger = logging.getLogger(__name__)
@@ -144,7 +145,7 @@ class BatchDeps:
         clock: Zero-arg callable returning the current UTC instant.
     """
 
-    db: SupabaseREST
+    db: SupabaseClient
     batch_shared_secret: str
     model_cache: ModelCache
     fail_ping: Callable[[str], None]
@@ -189,13 +190,13 @@ def _is_momentum_usable(momentum: MomentumRow | None, now: datetime) -> bool:
     )
 
 
-def _load_active_carparks(db: SupabaseREST) -> list[CarparkInfo]:
+def _load_active_carparks(db: SupabaseClient) -> list[CarparkInfo]:
     """Load the active-carpark whitelist (`carparks` where active=true)."""
     result = db.select("carparks", params={"select": "carpark_id,name", "active": "eq.true"})
     return [CarparkInfo(carpark_id=r["carpark_id"], name=r["name"]) for r in result.rows]
 
 
-def _load_active_model_version(db: SupabaseREST) -> str | None:
+def _load_active_model_version(db: SupabaseClient) -> str | None:
     """Load `model_config.active_model_version` (the singleton row)."""
     result = db.select("model_config", params={"select": "active_model_version", "limit": "1"})
     if not result.rows:
@@ -203,7 +204,7 @@ def _load_active_model_version(db: SupabaseREST) -> str | None:
     return result.rows[0].get("active_model_version")
 
 
-def _load_history_stats(db: SupabaseREST, carpark_ids: list[str]) -> dict[str, HistoryStats]:
+def _load_history_stats(db: SupabaseClient, carpark_ids: list[str]) -> dict[str, HistoryStats]:
     """Fetch (first_polled_at, sample_count, capacity, live_lots) per carpark.
 
     Implemented as three order+limit=1 point queries per carpark rather
@@ -261,7 +262,7 @@ def _load_history_stats(db: SupabaseREST, carpark_ids: list[str]) -> dict[str, H
     return stats
 
 
-def _load_momentum(db: SupabaseREST, carpark_ids: list[str]) -> dict[str, MomentumRow]:
+def _load_momentum(db: SupabaseClient, carpark_ids: list[str]) -> dict[str, MomentumRow]:
     """Fetch `carpark_momentum` rows for the given carparks, in one call."""
     if not carpark_ids:
         return {}
@@ -285,7 +286,7 @@ def _load_momentum(db: SupabaseREST, carpark_ids: list[str]) -> dict[str, Moment
 
 
 def _load_baseline(
-    db: SupabaseREST, carpark_ids: list[str]
+    db: SupabaseClient, carpark_ids: list[str]
 ) -> dict[tuple[str, int, int], float]:
     """Fetch every `carpark_baseline` row for the given carparks.
 
@@ -326,7 +327,7 @@ def _cold_start_row(carpark_id: str, live_lots: int, generated_at: str) -> Forec
 
 def _resolve_booster(
     deps: BatchDeps, active_version: str | None
-) -> tuple[object | None, str | None]:
+) -> tuple[lightgbm.Booster | None, str | None]:
     """Resolve the booster to serve with this batch run, if any.
 
     Args:
@@ -419,7 +420,15 @@ def run_batch_predict(deps: BatchDeps) -> BatchResult:
         capacity = stats.capacity if stats is not None and stats.capacity is not None else 0
         momentum_row = momentum.get(carpark.carpark_id)
 
-        if booster is not None and _is_momentum_usable(momentum_row, now):
+        if booster is not None and momentum_row is not None and _is_momentum_usable(
+            momentum_row, now
+        ):
+            # _is_momentum_usable already guarantees these three are not
+            # None; asserted explicitly so the type checker can narrow them
+            # from `int | None` to `int` at the call below.
+            assert momentum_row.lots_15m_ago is not None
+            assert momentum_row.lots_30m_ago is not None
+            assert momentum_row.lots_60m_ago is not None
             feature_vector = build_feature_vector(
                 target,
                 lots_now=live_lots,
@@ -460,7 +469,9 @@ def run_batch_predict(deps: BatchDeps) -> BatchResult:
             )
 
     try:
-        deps.db.upsert("carpark_forecast", [row.to_dict() for row in rows], on_conflict="carpark_id")
+        deps.db.upsert(
+            "carpark_forecast", [row.to_dict() for row in rows], on_conflict="carpark_id"
+        )
     except SupabaseUnavailableError as exc:
         logger.error("batch_predict: Supabase write failed: %s", exc)
         deps.fail_ping(FAIL_REASON_SUPABASE_UNAVAILABLE)

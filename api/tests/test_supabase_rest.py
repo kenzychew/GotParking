@@ -5,7 +5,6 @@ All network I/O is replaced with httpx.MockTransport (see conftest.py).
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 
 import httpx
@@ -16,6 +15,7 @@ from _lib.supabase_rest import (
     SupabaseUnavailableError,
     parse_timestamp,
 )
+from tests.conftest import RoutedTransportFactory, SequentialTransportFactory
 
 BASE_URL = "https://example.supabase.co"
 SERVICE_KEY = "test-service-role-key"
@@ -30,7 +30,7 @@ class TestSelect:
 
     def test_happy_path_returns_parsed_rows(
         self,
-        make_sequential_transport: Callable[[Sequence[httpx.Response]], httpx.MockTransport],
+        make_sequential_transport: SequentialTransportFactory,
     ) -> None:
         rows = [{"carpark_id": "1", "name": "Suntec City"}]
         transport = make_sequential_transport([httpx.Response(200, json=rows)])
@@ -43,7 +43,7 @@ class TestSelect:
 
     def test_prefer_count_parses_content_range_total(
         self,
-        make_routed_transport: Callable[[Callable[[httpx.Request], httpx.Response]], httpx.MockTransport],
+        make_routed_transport: RoutedTransportFactory,
     ) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["prefer"] == "count=exact"
@@ -58,7 +58,7 @@ class TestSelect:
 
     def test_prefer_count_with_unknown_total_returns_none(
         self,
-        make_routed_transport: Callable[[Callable[[httpx.Request], httpx.Response]], httpx.MockTransport],
+        make_routed_transport: RoutedTransportFactory,
     ) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json=[], headers={"content-range": "*/*"})
@@ -71,7 +71,7 @@ class TestSelect:
 
     def test_retries_once_on_5xx_then_succeeds(
         self,
-        make_sequential_transport: Callable[[Sequence[httpx.Response]], httpx.MockTransport],
+        make_sequential_transport: SequentialTransportFactory,
     ) -> None:
         transport = make_sequential_transport(
             [httpx.Response(503, text="service unavailable"), httpx.Response(200, json=[])]
@@ -84,9 +84,7 @@ class TestSelect:
 
     def test_retries_once_on_network_error_then_succeeds(
         self,
-        make_sequential_transport: Callable[
-            [Sequence[httpx.Response | BaseException]], httpx.MockTransport
-        ],
+        make_sequential_transport: SequentialTransportFactory,
     ) -> None:
         transport = make_sequential_transport(
             [httpx.ConnectError("connection refused"), httpx.Response(200, json=[{"ok": True}])]
@@ -99,7 +97,7 @@ class TestSelect:
 
     def test_raises_supabase_unavailable_after_retry_also_fails(
         self,
-        make_sequential_transport: Callable[[Sequence[httpx.Response]], httpx.MockTransport],
+        make_sequential_transport: SequentialTransportFactory,
     ) -> None:
         transport = make_sequential_transport(
             [httpx.Response(500, text="boom"), httpx.Response(500, text="boom again")]
@@ -111,9 +109,7 @@ class TestSelect:
 
     def test_raises_supabase_unavailable_after_two_network_errors(
         self,
-        make_sequential_transport: Callable[
-            [Sequence[httpx.Response | BaseException]], httpx.MockTransport
-        ],
+        make_sequential_transport: SequentialTransportFactory,
     ) -> None:
         transport = make_sequential_transport(
             [httpx.ConnectError("down"), httpx.ConnectError("still down")]
@@ -129,7 +125,7 @@ class TestSelectAll:
 
     def test_single_page_when_under_page_size(
         self,
-        make_sequential_transport: Callable[[Sequence[httpx.Response]], httpx.MockTransport],
+        make_sequential_transport: SequentialTransportFactory,
     ) -> None:
         transport = make_sequential_transport([httpx.Response(200, json=[{"i": 1}, {"i": 2}])])
         client = _client(transport)
@@ -140,7 +136,7 @@ class TestSelectAll:
 
     def test_stops_after_partial_page(
         self,
-        make_sequential_transport: Callable[[Sequence[httpx.Response]], httpx.MockTransport],
+        make_sequential_transport: SequentialTransportFactory,
     ) -> None:
         # page_size=2: page 1 full (2 rows) -> fetch page 2; page 2 partial
         # (1 row) -> stop. Total 3 rows across 2 requests.
@@ -158,7 +154,7 @@ class TestSelectAll:
 
     def test_exact_multiple_of_page_size_fetches_trailing_empty_page(
         self,
-        make_sequential_transport: Callable[[Sequence[httpx.Response]], httpx.MockTransport],
+        make_sequential_transport: SequentialTransportFactory,
     ) -> None:
         # Exactly page_size rows on page 1 means the loop cannot tell it was
         # the last page without trying page 2, which comes back empty.
@@ -180,7 +176,7 @@ class TestUpsert:
 
     def test_sends_merge_duplicates_prefer_header_and_body(
         self,
-        make_routed_transport: Callable[[Callable[[httpx.Request], httpx.Response]], httpx.MockTransport],
+        make_routed_transport: RoutedTransportFactory,
     ) -> None:
         captured: dict[str, object] = {}
 
@@ -200,7 +196,7 @@ class TestUpsert:
 
     def test_raises_supabase_unavailable_when_write_fails_twice(
         self,
-        make_sequential_transport: Callable[[Sequence[httpx.Response]], httpx.MockTransport],
+        make_sequential_transport: SequentialTransportFactory,
     ) -> None:
         transport = make_sequential_transport(
             [httpx.Response(500, text="fail"), httpx.Response(500, text="fail again")]
@@ -216,7 +212,7 @@ class TestDownloadStorageObject:
 
     def test_returns_raw_bytes(
         self,
-        make_routed_transport: Callable[[Callable[[httpx.Request], httpx.Response]], httpx.MockTransport],
+        make_routed_transport: RoutedTransportFactory,
     ) -> None:
         model_bytes = b"tree\nversion=v3\n..."
 
@@ -232,7 +228,7 @@ class TestDownloadStorageObject:
 
     def test_missing_object_raises_after_retry(
         self,
-        make_sequential_transport: Callable[[Sequence[httpx.Response]], httpx.MockTransport],
+        make_sequential_transport: SequentialTransportFactory,
     ) -> None:
         transport = make_sequential_transport(
             [httpx.Response(404, text="not found"), httpx.Response(404, text="not found")]

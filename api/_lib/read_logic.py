@@ -23,7 +23,7 @@ import logging
 from dataclasses import dataclass
 
 from _lib.http_helpers import HttpResponse
-from _lib.supabase_rest import SupabaseREST, parse_timestamp
+from _lib.supabase_rest import SupabaseClient, parse_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class ReadDeps:
             a `select(table, params=...)` method).
     """
 
-    db: SupabaseREST
+    db: SupabaseClient
 
 
 def unavailable_response() -> HttpResponse:

@@ -7,7 +7,7 @@ supporting coverage for slot-of-day arithmetic and naive-datetime input.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 from _lib.sg_time import HOLIDAYS, is_holiday, sgt_parts
 
