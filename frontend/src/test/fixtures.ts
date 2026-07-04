@@ -9,7 +9,7 @@ export function makeCarparkForecast(
   overrides: Partial<CarparkForecast> & { carpark_id: string },
 ): CarparkForecast {
   const seed = SEED_CARPARKS.find((c) => c.id === overrides.carpark_id);
-  return {
+  const defaults: CarparkForecast = {
     carpark_id: overrides.carpark_id,
     name: seed?.name ?? overrides.carpark_id,
     state: "baseline",
@@ -17,8 +17,8 @@ export function makeCarparkForecast(
     tier: "plenty",
     live_lots: 190,
     model_version: null,
-    ...overrides,
   };
+  return { ...defaults, ...overrides };
 }
 
 export function makeForecastPayload(options?: {
