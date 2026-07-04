@@ -23,6 +23,9 @@ Design locked: approved through /office-hours, /plan-eng-review, /autoplan (CEO 
 Eng), and a 2026-07-04 max-effort eng re-review (11 findings, all resolved and folded in —
 see the design doc's GSTACK REVIEW REPORT). T1 signal validation done (all 10 seed carparks
 confirmed). T0 SINPA spike done: GO — the first LightGBM pretrains on the SINPA historical
-dataset and fine-tunes on live 2026 data (`docs/t0-sinpa-spike.md`). Provisioning is
-underway (`docs/provisioning-checklist.md`, Phase 1 complete); next code task: T2 schema —
-see the design doc's Implementation Tasks.
+dataset and fine-tunes on live 2026 data (`docs/t0-sinpa-spike.md`). T2 schema applied and
+verified live. Provisioning Phases 1-2 complete (`docs/provisioning-checklist.md`); Phases
+3-6 (healthchecks, Cloudflare, Vercel, secrets) in progress.
+
+T3 (poller) done: `poller/`, 38/38 tests green. T4 (api), T5 (training), T6 (frontend) are
+building in parallel worktrees — see the design doc's Implementation Tasks for status.
