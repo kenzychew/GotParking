@@ -59,31 +59,36 @@ Public vs private -- decide before creating the repo:
   minutes fits easily, so this is not a real constraint either. Tradeoff: no
   portfolio visibility.
 
-- [ ] Decide visibility. Recommendation: **Public**.
-- [ ] Pre-push safety check, in a terminal at
+- [x] Decide visibility. Recommendation: **Public**. -- DONE 2026-07-04: repo is Public.
+- [x] Pre-push safety check, in a terminal at
       `C:\Users\kenzy\gstack-playground`:
       - `git ls-files .env` -- must print nothing (`.env` is not tracked)
       - `git check-ignore .env` -- must print `.env` (it is gitignored)
       If either fails, STOP and fix `.gitignore` before pushing anything.
-- [ ] Confirm repo state: `git status` shows branch `main` and no stray
+      -- DONE 2026-07-04: verified clean (no `.env` or `data/` files tracked).
+- [x] Confirm repo state: `git status` shows branch `main` and no stray
       uncommitted files you meant to include; `git log --oneline -3` shows the
-      scaffold/T1 commits.
-- [ ] Create the remote at `https://github.com/new`: Repository name
+      scaffold/T1 commits. -- DONE 2026-07-04 (baseline v0.0.1.0, 3 commits).
+- [x] Create the remote at `https://github.com/new`: Repository name
       `gotparking`, visibility per your decision, and do NOT initialize with a
       README, .gitignore, or license (the local repo already has history; an
       initialized remote would diverge). The local folder name
       (`gstack-playground`) not matching the repo name is fine.
-- [ ] Connect and push, from `C:\Users\kenzy\gstack-playground`:
+      -- DONE 2026-07-04: created as `GotParking` (capitalization differs from
+      the suggested name; harmless -- GitHub URLs are case-insensitive here).
+- [x] Connect and push, from `C:\Users\kenzy\gstack-playground`:
       - `git remote add origin https://github.com/<your-username>/gotparking.git`
         (if `git remote -v` already shows an `origin`, skip the add)
       - `git push -u origin main`
       (CLI alternative for both steps:
       `gh repo create gotparking --public --source . --remote origin --push`,
       swapping `--public` for `--private` per your decision.)
-- [ ] Verify the repo page shows the pushed tree: `api/`, `db/`, `frontend/`,
+      -- DONE 2026-07-04: `main` pushed and tracking `origin/main`.
+- [x] Verify the repo page shows the pushed tree: `api/`, `db/`, `frontend/`,
       `poller/`, `training/`, `scripts/`, `README.md`, etc.
-- [ ] Record `GITHUB_REPO_URL` = `https://github.com/<your-username>/gotparking`
-      in your scratch note.
+      -- DONE 2026-07-04: origin/main matches local; repo confirmed via gh.
+- [x] Record `GITHUB_REPO_URL` = `https://github.com/kenzychew/GotParking`
+      in your scratch note. -- DONE (recorded here).
 
 Note: Actions repository secrets are wired in Phase 6b. No workflow exists yet
 (T5 adds `.github/workflows/train.yml`) -- an empty Actions tab is expected.
