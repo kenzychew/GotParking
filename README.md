@@ -28,7 +28,8 @@ verified live. Provisioning Phases 1-2 complete (`docs/provisioning-checklist.md
 3-6 (healthchecks, Cloudflare, Vercel, secrets) in progress.
 
 T3 (poller) done: `poller/`, 38/38 tests green. T4 (api) done: `api/`, 113/113 tests green,
-ruff + mypy clean. T5 (training) and T6 (frontend) are building in parallel worktrees — see
-the design doc's Implementation Tasks for status. One known gap tracked in TODOS.md: batch
-predict's failure alerting reuses the training job's healthchecks check (imprecise but not
-a functional bug).
+ruff + mypy clean. T6 (frontend) done: `frontend/`, 70/70 tests green, production build
+clean (installable PWA, offline cache, Public Sans self-hosted). T5 (training) is the last
+lane still building — see the design doc's Implementation Tasks for status. One known gap
+tracked in TODOS.md: batch predict's failure alerting reuses the training job's
+healthchecks check (imprecise but not a functional bug).
