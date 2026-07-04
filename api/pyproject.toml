@@ -1,0 +1,23 @@
+[project]
+name = "gotparking-api"
+version = "0.1.0"
+description = "GotParking Vercel Python functions (T4): batch-predict + public forecast read."
+requires-python = ">=3.11"
+dependencies = [
+    "lightgbm>=4.3,<5",
+    "numpy>=1.26,<3",
+    "httpx>=0.27,<1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0,<9",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

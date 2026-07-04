@@ -2,6 +2,35 @@
 
 ## Infrastructure
 
+### Add a dedicated healthchecks.io check for batch-predict failures
+
+**What:** Provision a third healthchecks.io check (e.g. `gotparking-batch-predict`, ~10 min
+expected period matching the poll cycle) and wire a dedicated
+`HEALTHCHECKS_BATCH_PING_URL` into `api/_lib/config.py` / `healthchecks.py`, replacing the
+current reuse of `HEALTHCHECKS_TRAINING_PING_URL` for batch predict's `/fail` pings.
+
+**Why:** T4 (Lane D) was wired only the training job's ping URL, but the design doc's batch
+predict spec (T4, Failure Modes registry) requires a `/fail` ping on model-artifact failure
+AND on Supabase read/write failure. The agent correctly flagged this as a scope gap and used
+the training URL as a stopgap, tagging pings with a `reason` field to disambiguate. The real
+problem: the training check has a weekly expected period + 24h grace (Premise #8/T1.5). A
+single batch-predict failure pings that check's `/fail` endpoint, which then shows "down"
+and alerts — and stays down until the NEXT weekly training success ping clears it (batch
+predict never pings success on this URL), i.e. up to a week of a misleading "training is
+down" alert state for what might have been one transient batch hiccup.
+
+**Context:** This is an alerting-precision gap, not a functional bug — the actual
+fallback-to-baseline behavior on artifact/Supabase failure is correct and tested
+(`api/tests/test_batch_predict.py`). Fix is contained: one more healthchecks.io check
+(manual, ~2 min) plus a new env var threaded through `config.py`/`healthchecks.py` and the
+three platforms' secret stores (Cloudflare doesn't need it; Vercel does). See
+`docs/provisioning-checklist.md` Phase 3 for the pattern used for the existing two checks.
+
+**Effort:** S (~15 min: one dashboard check + a few lines of code + one secret to wire)
+**Priority:** P2
+**Depends on:** None — can be done any time before the batch-predict endpoint sees real
+production failures.
+
 ### Revisit connection-pool/thundering-herd behavior under real traffic
 
 **What:** Load-test Supabase free-tier connection pool limits and Vercel cold-instance
