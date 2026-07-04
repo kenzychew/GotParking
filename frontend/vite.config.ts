@@ -9,6 +9,10 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
+      // Registered explicitly in src/main.tsx (virtual:pwa-register) instead
+      // of the plugin's auto-injected script, so registration is visible and
+      // guarded behind import.meta.env.PROD in one obvious place.
+      injectRegister: false,
       includeAssets: ["icons/*.png"],
       manifest: {
         id: "/",
