@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 import httpx
+import numpy as np
 import pytest
 
 
@@ -66,3 +67,45 @@ def make_routed_transport() -> Callable[[Callable[[httpx.Request], httpx.Respons
         return httpx.MockTransport(handler)
 
     return factory
+
+
+@pytest.fixture(scope="session")
+def tiny_lightgbm_model_str() -> str:
+    """Train a minimal real LightGBM regressor and return its text dump.
+
+    This exercises the actual `lightgbm.Booster(model_str=...)` round trip
+    (not just mocked caching logic) without shipping a binary fixture file.
+    Trained once per test session -- deterministic (fixed seed) and
+    read-only from every consumer's point of view, so session scope is
+    safe and avoids repeating the (small but non-instant) training cost.
+
+    Columns follow the exact feature contract order: [dow, slot_of_day,
+    is_holiday, lots_now, lots_15m_ago, lots_30m_ago, lots_60m_ago].
+    """
+    import lightgbm as lgb
+
+    rng = np.random.default_rng(42)
+    n = 50
+    features = np.column_stack(
+        [
+            rng.integers(0, 7, n),
+            rng.integers(0, 96, n),
+            rng.integers(0, 2, n),
+            rng.integers(0, 200, n),
+            rng.integers(0, 200, n),
+            rng.integers(0, 200, n),
+            rng.integers(0, 200, n),
+        ]
+    ).astype(np.float64)
+    target = features[:, 3] + rng.normal(0, 1, n)
+
+    dataset = lgb.Dataset(features, label=target)
+    params = {
+        "objective": "regression",
+        "verbosity": -1,
+        "min_data_in_leaf": 1,
+        "min_data_in_bin": 1,
+        "num_leaves": 3,
+    }
+    booster = lgb.train(params, dataset, num_boost_round=2)
+    return booster.model_to_string()
