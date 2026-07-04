@@ -11,8 +11,8 @@ Full design doc, dedupe research, architecture, and review findings:
 
 - `db/` — Supabase schema and RLS policies (ap-southeast-1)
 - `poller/` — Cloudflare Worker, polls LTA DataMall every 5 min, triggers batch predictions
-- `training/` — weekly GitHub Actions job, trains and promotes LightGBM (two-phase gate,
-  benchmarked against historical-average AND persistence)
+- `training/` — weekly GitHub Actions job, trains and promotes LightGBM (SINPA-pretrained
+  first candidate, two-phase gate, benchmarked against historical-average AND persistence)
 - `api/` — Vercel Python (sin1): poller-triggered batch forecasts + the public cached read
   endpoint (the only public API surface)
 - `frontend/` — mobile-first PWA
@@ -21,6 +21,8 @@ Full design doc, dedupe research, architecture, and review findings:
 
 Design locked: approved through /office-hours, /plan-eng-review, /autoplan (CEO + Design +
 Eng), and a 2026-07-04 max-effort eng re-review (11 findings, all resolved and folded in —
-see the design doc's GSTACK REVIEW REPORT). T1 signal validation is done (all 10 seed
-carparks confirmed). Next: T1.5 human provisioning checklist, then T0 SINPA spike / T2
-schema — see the design doc's Implementation Tasks.
+see the design doc's GSTACK REVIEW REPORT). T1 signal validation done (all 10 seed carparks
+confirmed). T0 SINPA spike done: GO — the first LightGBM pretrains on the SINPA historical
+dataset and fine-tunes on live 2026 data (`docs/t0-sinpa-spike.md`). Provisioning is
+underway (`docs/provisioning-checklist.md`, Phase 1 complete); next code task: T2 schema —
+see the design doc's Implementation Tasks.
