@@ -99,6 +99,21 @@ describe("runCycle: LTA fetch retry/failure", () => {
     expect(router.calls.some((c) => c.url === HISTORY_URL && c.method === "POST")).toBe(true);
   });
 
+  it("does not retry a non-5xx LTA HTTP error (e.g. 401 on a bad AccountKey)", async () => {
+    const env = makeEnv();
+    const router = buildBaseRouter(env, { ltaValue: fullLtaRecords() });
+    router.onUrl(LTA_ENDPOINT, "GET", () => textResponse("invalid AccountKey", 401));
+    vi.stubGlobal("fetch", router.fetch);
+
+    await runCycle(env, NOW);
+
+    // A 4xx will not heal within a cycle -- only timeout/5xx get the one retry.
+    expect(router.calls.filter((c) => c.url === LTA_ENDPOINT)).toHaveLength(1);
+    expect(router.calls.some((c) => c.url === HISTORY_URL)).toBe(false);
+    const failCall = router.calls.find((c) => c.url === FAIL_PING_URL && c.method === "POST");
+    expect(failCall?.body).toBe("LTA_FETCH_FAILED");
+  });
+
   it("gives up after one retry: persistent LTA failure fails the cycle, pings /fail, never reaches Supabase", async () => {
     const env = makeEnv();
     const router = buildBaseRouter(env, { ltaValue: fullLtaRecords() });
