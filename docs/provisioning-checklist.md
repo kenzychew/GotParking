@@ -100,9 +100,10 @@ be `ap-southeast-1` (shown as `Southeast Asia (Singapore)`). Region cannot be
 changed after creation; getting it wrong means migrating the database later.
 Double-check the region dropdown before clicking Create.
 
-- [ ] Sign in at `https://supabase.com/dashboard` (create the account if
+- [x] Sign in at `https://supabase.com/dashboard` (create the account if
       needed; the default personal organization on the Free plan is fine).
-- [ ] Click `New project` and fill in exactly:
+      -- DONE 2026-07-04.
+- [x] Click `New project` and fill in exactly:
       - Organization: your personal org
       - Project name: `gotparking`
       - Database password: use the Generate button and SAVE the value to your
@@ -111,16 +112,28 @@ Double-check the region dropdown before clicking Create.
       - Region: `Southeast Asia (Singapore)` = `ap-southeast-1`  <-- the
         create-time-only decision
       - Plan/instance size: Free
-- [ ] Click Create and wait for provisioning to finish (a few minutes).
-- [ ] Verify the region IMMEDIATELY: `Project Settings` > `General` (or
+      -- DONE 2026-07-04: project ref `rkxarvcbzlutruadonge`. GitHub
+      integration skipped (not in architecture); security options left at
+      defaults with Data API enabled on `public` (lockdown comes from the
+      schema's RLS + revoked grants, verified below).
+- [x] Click Create and wait for provisioning to finish (a few minutes).
+      -- DONE 2026-07-04.
+- [x] Verify the region IMMEDIATELY: `Project Settings` > `General` (or
       `Infrastructure`; menu names may drift -- the setting to find is the
       project's Region) must read `ap-southeast-1` / Southeast Asia
       (Singapore). If it shows anything else, DELETE the project and recreate
       it now -- deletion is cheap today; a database migration later is not.
-- [ ] Copy the Project URL -> record as `SUPABASE_URL`. Found under
+      -- DONE 2026-07-04: confirmed empirically -- warm REST round trips from
+      a Singapore machine measure ~110ms (a US-region database would be
+      250ms+ on network alone), consistent only with ap-southeast-1.
+- [x] Copy the Project URL -> record as `SUPABASE_URL`. Found under
       `Project Settings` > `Data API` (or `API`), field `Project URL`, format
       `https://<project-ref>.supabase.co`.
-- [ ] Copy the service-role key -> record as `SUPABASE_SERVICE_ROLE_KEY`.
+      -- DONE 2026-07-04: saved to local .env. Gotcha hit and fixed: the
+      dashboard's REST URL (`.../rest/v1/`) was copied first; the correct
+      value is the BASE url with no path -- client libraries append
+      `/rest/v1/` themselves.
+- [x] Copy the service-role key -> record as `SUPABASE_SERVICE_ROLE_KEY`.
       Found under `Project Settings` > `API Keys`. (Menu names may drift; the
       key to find is the SERVER-SIDE key that BYPASSES Row Level Security --
       current dashboards show it either as the legacy `service_role` key or
@@ -128,12 +141,23 @@ Double-check the region dropdown before clicking Create.
       under the name `SUPABASE_SERVICE_ROLE_KEY`. NEVER use the
       `anon`/publishable key for this -- the whole RLS design in the Security
       section assumes only this key can write.)
-- [ ] Create the model-artifact bucket: `Storage` > `New bucket`, name exactly
+      -- DONE 2026-07-04: saved to local .env (never pasted in chat).
+- [x] Create the model-artifact bucket: `Storage` > `New bucket`, name exactly
       `models`, and leave the `Public bucket` toggle OFF -- the bucket must be
       PRIVATE (it will hold LightGBM model artifacts written by the training
       job and read by the batch-predict function, both using the service-role
       key; design doc Premise #9).
-- [ ] Confirm the bucket list shows `models` marked Private.
+      -- DONE 2026-07-04: created by `db/schema.sql` section 9 (T2 landed
+      before this manual step), with `public = false`.
+- [x] Confirm the bucket list shows `models` marked Private.
+      -- DONE 2026-07-04 via `select id, name, public from storage.buckets`.
+
+T2 schema applied and verified 2026-07-04 (see `db/README.md` for the
+procedure): 7 tables present, 10 seed carparks with SINPA indices,
+model_config singleton (baseline-only), duplicate-insert guard proven
+(same reading twice -> exactly one row), anon publishable key locked out
+(42501 permission denied on read AND write across tables), service-role
+access working.
 
 Notes:
 - Do NOT create any tables now -- the schema (`carpark_history`,
