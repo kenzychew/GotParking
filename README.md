@@ -27,5 +27,8 @@ dataset and fine-tunes on live 2026 data (`docs/t0-sinpa-spike.md`). T2 schema a
 verified live. Provisioning Phases 1-2 complete (`docs/provisioning-checklist.md`); Phases
 3-6 (healthchecks, Cloudflare, Vercel, secrets) in progress.
 
-T3 (poller) done: `poller/`, 38/38 tests green. T4 (api), T5 (training), T6 (frontend) are
-building in parallel worktrees — see the design doc's Implementation Tasks for status.
+T3 (poller) done: `poller/`, 38/38 tests green. T4 (api) done: `api/`, 113/113 tests green,
+ruff + mypy clean. T5 (training) and T6 (frontend) are building in parallel worktrees — see
+the design doc's Implementation Tasks for status. One known gap tracked in TODOS.md: batch
+predict's failure alerting reuses the training job's healthchecks check (imprecise but not
+a functional bug).
