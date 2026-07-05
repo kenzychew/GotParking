@@ -1,0 +1,48 @@
+name: Weekly training (T5)
+
+# Schedule: "0 21 * * 6" is Saturday 21:00 UTC == Sunday 05:00 SGT (Asia/Singapore
+# is UTC+8, no DST -- see training/src/gotparking_training/sg_time.py). Chosen for
+# low SG carpark traffic, per design doc T5 / Premise #7 (amended).
+#
+# IMPORTANT: GitHub disables scheduled workflows automatically after 60 days with
+# no repository activity (a documented GitHub Actions behavior, not a bug). This
+# is EXACTLY the failure mode the design doc's absence-based alerting (Premise #8)
+# is built to catch: the weekly healthchecks.io ping (HEALTHCHECKS_TRAINING_PING_URL)
+# has its own grace period, so a silently-disabled schedule shows up as a missed
+# ping and emails the owner -- it does not rely on this workflow being able to
+# observe its own non-execution, which no CI config could ever do.
+on:
+  schedule:
+    - cron: "0 21 * * 6"
+  workflow_dispatch: {}
+
+jobs:
+  train:
+    name: Train, backtest, and (maybe) promote
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "training/uv.lock"
+
+      - name: Set up Python
+        run: uv python install
+        working-directory: training
+
+      - name: Sync dependencies
+        run: uv sync --locked
+        working-directory: training
+
+      - name: Run weekly training job
+        run: uv run python -m gotparking_training
+        working-directory: training
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          HEALTHCHECKS_TRAINING_PING_URL: ${{ secrets.HEALTHCHECKS_TRAINING_PING_URL }}

@@ -500,6 +500,38 @@ class TestMainEntryPoint:
         assert pings["success"] == []
         assert pings["fail"] == []  # already pinged inside run(), not re-pinged here
 
+    def test_configuration_error_still_fires_a_fail_ping(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A misconfigured/missing required secret (load_settings() raising,
+        e.g. SUPABASE_URL unset) must still alert -- this failure happens
+        before a Settings object exists, so main() must read the ping URL
+        independently from the environment rather than only from settings.
+        """
+        pings: dict[str, list[object]] = {"success": [], "fail": []}
+        monkeypatch.setenv("HEALTHCHECKS_TRAINING_PING_URL", "https://hc-ping.com/abc")
+
+        def raise_missing_env() -> object:
+            raise RuntimeError("missing required environment variable(s): SUPABASE_URL")
+
+        monkeypatch.setattr("gotparking_training.train.load_settings", raise_missing_env)
+        monkeypatch.setattr(
+            "gotparking_training.train.ping_success", lambda url: pings["success"].append(url)
+        )
+        monkeypatch.setattr(
+            "gotparking_training.train.ping_fail",
+            lambda url, reason: pings["fail"].append((url, reason)),
+        )
+
+        exit_code = main()
+
+        assert exit_code == 1
+        assert pings["success"] == []
+        assert len(pings["fail"]) == 1
+        url, reason = pings["fail"][0]
+        assert url == "https://hc-ping.com/abc"
+        assert "SUPABASE_URL" in reason
+
 
 class _FakeSettings:
     def __init__(self, url: str, key: str, healthchecks_url: str | None) -> None:

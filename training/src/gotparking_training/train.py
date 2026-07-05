@@ -18,6 +18,7 @@ See `run()` for the full pipeline and `main()` for the process entry point
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -316,12 +317,28 @@ def main() -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
     )
-    settings = load_settings()
-    db = SupabaseREST(settings.supabase_url, settings.supabase_service_role_key)
+
+    # Read the ping URL directly from the environment BEFORE load_settings(),
+    # so a misconfigured/missing required secret (e.g. SUPABASE_URL) can
+    # still fire a /fail ping below -- if this lived only on `settings`,
+    # a config error would crash with an unhandled exception and no alert,
+    # exactly the silent-failure gap Premise #8 exists to close.
+    healthchecks_url = os.environ.get("HEALTHCHECKS_TRAINING_PING_URL", "").strip() or None
+
+    try:
+        settings = load_settings()
+        healthchecks_url = settings.healthchecks_training_ping_url
+        db: SupabaseClient = SupabaseREST(settings.supabase_url,
+                                           settings.supabase_service_role_key)
+    except Exception as exc:  # noqa: BLE001 - top-level guard, must catch everything
+        logger.exception("training job failed to start (configuration error)")
+        ping_fail(healthchecks_url, f"{FAIL_REASON_TRAINING_CRASH}: {exc}")
+        return 1
+
     deps = TrainDeps(
         db=db,
         clock=lambda: datetime.now(timezone.utc),
-        fail_ping=lambda reason: ping_fail(settings.healthchecks_training_ping_url, reason),
+        fail_ping=lambda reason: ping_fail(healthchecks_url, reason),
     )
     try:
         try:
@@ -331,13 +348,12 @@ def main() -> int:
             return 1
         except Exception as exc:  # noqa: BLE001 - top-level guard, must catch everything
             logger.exception("training job crashed unexpectedly")
-            ping_fail(settings.healthchecks_training_ping_url,
-                      f"{FAIL_REASON_TRAINING_CRASH}: {exc}")
+            ping_fail(healthchecks_url, f"{FAIL_REASON_TRAINING_CRASH}: {exc}")
             return 1
     finally:
         db.close()
 
-    ping_success(settings.healthchecks_training_ping_url)
+    ping_success(healthchecks_url)
     logger.info("training run complete: %s", result)
     return 0
 
