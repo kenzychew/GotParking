@@ -30,15 +30,17 @@ Ground rules (design doc, Security section):
 - [ ] Confirm the local `.env` at `C:\Users\kenzy\gstack-playground\.env`
       contains a line starting with `LTA_API_KEY=`. Do not print or copy the
       value anywhere yet.
-- [ ] Generate the new `BATCH_SHARED_SECRET` (random, 32+ characters). It
+- [x] Generate the new `BATCH_SHARED_SECRET` (random, 32+ characters). It
       gates the poller-to-batch-predict endpoint (design doc Premise #9 as
       amended 2026-07-04, D10). Run ONE of:
       - Git Bash: `openssl rand -hex 32`
       - PowerShell:
         `$b = New-Object byte[] 32; (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($b); -join ($b | ForEach-Object { $_.ToString("x2") })`
-- [ ] Append the generated value to the local `.env` as a new line:
+      -- DONE 2026-07-05: generated via `openssl rand -hex 32` (64 hex chars).
+- [x] Append the generated value to the local `.env` as a new line:
       `BATCH_SHARED_SECRET=<generated value>`. This is your single local
       reference copy (`.env` is gitignored -- re-verified in Phase 1).
+      -- DONE 2026-07-05.
 - [ ] Open a scratch note or password-manager entry titled
       `gotparking provisioning` to collect the values in the "Hand-off state"
       list at the bottom of this file as you go.
@@ -206,23 +208,41 @@ email alerts included. Failure signaling needs no extra setup -- jobs append
 
 ## Phase 4: Cloudflare -- Workers project + 5-minute cron
 
-- [ ] Sign up / sign in at `https://dash.cloudflare.com` (Free plan; no
-      domain required for Workers).
-- [ ] If prompted, register your `workers.dev` subdomain (any handle you
-      like; it only affects the dev URL).
-- [ ] Create the Worker: `Workers & Pages` (may appear as `Compute (Workers)`)
-      > `Create` > `Workers` > start from the `Hello World` template > name it
-      exactly `gotparking-poller` > `Deploy`. (Menu names may drift; the goal
-      is a deployed hello-world Worker named `gotparking-poller`.)
-- [ ] Verify it responds: open
-      `https://gotparking-poller.<your-subdomain>.workers.dev` -- expect the
-      template's `Hello World!` response.
-- [ ] Add the cron trigger: on the worker, `Settings` > `Triggers` (may
-      appear as `Trigger Events`) > `Cron Triggers` > `Add`, expression
-      exactly `*/5 * * * *` (every 5 minutes; supported on the free tier).
-      If the dashboard warns the Worker has no scheduled handler, that is
-      expected until T3 lands -- add the trigger anyway.
-- [ ] Confirm the trigger list shows `*/5 * * * *`.
+-- DONE 2026-07-05, via CLI rather than the dashboard click-path originally
+sketched below (T3's real poller code already existed by this point, so this
+phase and T3's actual deploy happened together). Actual sequence, for
+reference: `npx wrangler login` (OAuth, browser-completed), then
+`npx wrangler deploy` from `poller/` -- this reads the worker name
+(`gotparking-poller`) and the cron trigger (`*/5 * * * *`) directly from
+`poller/wrangler.toml`, so there was no separate "create a Hello World
+Worker, then add a cron trigger" dashboard flow to do by hand.
+
+- [x] Sign up / sign in at `https://dash.cloudflare.com` (Free plan; no
+      domain required for Workers). -- DONE via `wrangler login` (browser
+      OAuth), no dashboard visit needed for this step.
+- [x] Register your `workers.dev` subdomain. **Correction (found live,
+      2026-07-05): this is NOT a signup-time prompt** -- it's a per-worker
+      toggle. After the first `wrangler deploy`, go to
+      `Workers & Pages > gotparking-poller > Domains`, find the "Worker URL"
+      section, and toggle the `Production` switch ON next to
+      `gotparking-poller.<your-subdomain>.workers.dev` (the subdomain itself,
+      e.g. `kenzychew.workers.dev`, may already be assigned to your account
+      without any separate claim step). `wrangler deploy` fails with
+      "You need to register a workers.dev subdomain" until this toggle is
+      on, and this cannot be done non-interactively -- wrangler's own prompt
+      for it does not work in a scripted/CI context either (a documented
+      wrangler limitation, not a bug in this project).
+- [x] Create the Worker -- superseded: `wrangler deploy` created/updated the
+      Worker directly from `poller/wrangler.toml` and `poller/src/index.ts`;
+      no dashboard "start from Hello World" step was needed.
+- [x] Verify it responds -- DONE:
+      `https://gotparking-poller.kenzychew.workers.dev` deployed successfully
+      after the Domains toggle above.
+- [x] Add the cron trigger -- superseded: already declared in
+      `poller/wrangler.toml`'s `[triggers]` block and applied automatically
+      by `wrangler deploy`; no manual dashboard step needed.
+- [x] Confirm the trigger list shows `*/5 * * * *` -- confirmed in the
+      deploy output: `schedule: */5 * * * *`.
 
 Notes:
 - The Worker name matters: T3's wrangler deploy must target the same name
@@ -231,6 +251,12 @@ Notes:
 - Until T3 deploys real poller code, the cron invokes a no-op hello-world and
   pings nothing; healthchecks stays paused per Phase 3, so no false alarms.
 - Worker secrets are wired in Phase 6a.
+- **New finding (2026-07-05):** enabling the workers.dev route also turns on
+  Preview URLs by default (a wrangler warning noted this: `preview_urls` was
+  not explicitly set). Low-stakes for this worker (cron-only, no public
+  `fetch()` handler to expose), but worth an explicit `preview_urls = false`
+  in `wrangler.toml` later if that default is ever undesirable -- tracked in
+  TODOS.md rather than fixed now.
 
 ## Phase 5: Vercel -- project import + `sin1` region pin
 
@@ -309,17 +335,26 @@ values from your scratch note and local `.env`, never from a committed file.
 
 Path: worker `gotparking-poller` > `Settings` > `Variables and Secrets` >
 `Add`, Type `Secret`. (Menu names may drift; the setting to find is the
-Worker's encrypted environment variables.) CLI alternative:
-`npx wrangler secret put <NAME> --name gotparking-poller` after
-`npx wrangler login`.
+Worker's encrypted environment variables.) CLI alternative used in practice:
+`printf '%s' "$VALUE" | npx wrangler secret put <NAME>` from `poller/` (run
+from a shell that already sourced `.env`, e.g. `set -a; source ../.env; set
++a` -- `printf` avoids a trailing newline in the secret; piping via stdin
+means the value is never a literal command-line argument or echoed to any
+log).
 
-- [ ] `LTA_API_KEY` = the value of `LTA_API_KEY` from your local `.env`
-- [ ] `SUPABASE_URL` = the recorded value
-- [ ] `SUPABASE_SERVICE_ROLE_KEY` = the recorded value
-- [ ] `BATCH_SHARED_SECRET` = the value of `BATCH_SHARED_SECRET` from your
-      local `.env`
-- [ ] `HEALTHCHECKS_POLLER_PING_URL` = the recorded value
-- [ ] Click `Deploy` / apply if the dashboard asks to deploy the changes.
+- [x] `LTA_API_KEY` = the value of `LTA_API_KEY` from your local `.env`
+      -- DONE 2026-07-05, `wrangler secret list` confirms it's set.
+- [x] `SUPABASE_URL` = the recorded value -- DONE 2026-07-05.
+- [x] `SUPABASE_SERVICE_ROLE_KEY` = the recorded value -- DONE 2026-07-05.
+- [x] `BATCH_SHARED_SECRET` = the value of `BATCH_SHARED_SECRET` from your
+      local `.env` -- DONE 2026-07-05.
+- [ ] `HEALTHCHECKS_POLLER_PING_URL` = the recorded value -- still blocked on
+      Phase 3 (healthchecks.io checks not yet created). The poller already
+      handles this gracefully: it logs and skips the ping when the env var
+      is unset, so this is not blocking anything else.
+- [x] Click `Deploy` / apply if the dashboard asks to deploy the changes --
+      N/A via CLI; `wrangler secret put` applies immediately, no separate
+      deploy step needed for a secret change.
 - [ ] Deferred -- after T4's first deploy: `BATCH_PREDICT_URL` =
       `<VERCEL_PROD_URL>` + the batch endpoint path. Leave it unset today; do
       NOT block T1.5 completion on it. (Tracked again in the Hand-off list.)

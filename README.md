@@ -24,8 +24,11 @@ Eng), and a 2026-07-04 max-effort eng re-review (11 findings, all resolved and f
 see the design doc's GSTACK REVIEW REPORT). T1 signal validation done (all 10 seed carparks
 confirmed). T0 SINPA spike done: GO — the first LightGBM pretrains on the SINPA historical
 dataset and fine-tunes on live 2026 data (`docs/t0-sinpa-spike.md`). T2 schema applied and
-verified live. Provisioning Phases 1-2 complete (`docs/provisioning-checklist.md`); Phases
-3-6 (healthchecks, Cloudflare, Vercel, secrets) in progress.
+verified live. Provisioning: Phases 1-2 done; Phase 4 (Cloudflare) done — the poller is
+**live** at `https://gotparking-poller.kenzychew.workers.dev`, cron confirmed running every
+5 minutes, 4 of its 6 secrets wired (`HEALTHCHECKS_POLLER_PING_URL` and `BATCH_PREDICT_URL`
+still pending Phases 3 and 5). Phase 5 (Vercel) is blocked on a real platform issue — see
+below. Phase 3 (healthchecks.io) not started yet. See `docs/provisioning-checklist.md`.
 
 **All four implementation lanes are done and merged.** T3 (poller): `poller/`, 38/38 tests
 green. T4 (api): `api/`, 113/113 tests green, ruff + mypy clean. T6 (frontend): `frontend/`,
@@ -41,6 +44,16 @@ training job's healthchecks check (imprecise but not a functional bug — tracke
 TODOS.md); and a training bug where three early-exit cycles skipped without recording a
 `training_runs` audit row was found and fixed directly, with regression tests, before merge.
 
-Remaining before a live deploy: provisioning Phases 3-6 (healthchecks, Cloudflare, Vercel,
-secrets — `docs/provisioning-checklist.md`), then the post-deploy verification checklist in
-the design doc's Observability section.
+**Vercel deploy is currently blocked.** `vercel --prod` fails with "No python entrypoint
+found in default locations" despite `api/batch_predict.py` and `api/forecast.py` each
+correctly defining their own `handler` class — the documented "each file becomes its own
+function" convention doesn't seem to hold when a top-level `buildCommand` (for the frontend)
+also exists in the same `vercel.json`. Three fixes tried and failed (excluding
+`api/pyproject.toml`; an empty `functions` block; `functions` with `maxDuration` set).
+Leading theory: this project's shape (frontend + independent Python functions in one
+project) needs Vercel's newer `services` model instead of the plain `api/` convention —
+untried as of this writing. See the design doc for full details once resolved.
+
+Remaining before a live deploy: finish provisioning (Phase 3 healthchecks, Phase 5 Vercel —
+blocked, see above), wire the 2 remaining poller secrets once their dependencies exist, then
+the post-deploy verification checklist in the design doc's Observability section.

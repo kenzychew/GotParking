@@ -2,6 +2,24 @@
 
 ## Infrastructure
 
+### Explicitly disable Preview URLs on the poller Worker
+
+**What:** Add `preview_urls = false` to `poller/wrangler.toml` (top level, alongside the
+existing `[triggers]`/`[observability]` blocks).
+
+**Why:** Enabling the `workers.dev` route (required to make the poller reachable/deployable
+at all) turned on Preview URLs by default, since `preview_urls` wasn't explicitly set —
+`wrangler deploy` warned about this on the first successful deploy (2026-07-05).
+
+**Context:** Low-stakes today: the poller has no `fetch()` handler (it's cron-only, per
+Premise #9's workload-shape split), so there's nothing meaningful for a stray preview URL to
+expose. Worth closing anyway for explicitness/defense-in-depth before this becomes a habit
+across other Workers.
+
+**Effort:** S (one config line)
+**Priority:** P4
+**Depends on:** None
+
 ### Add a dedicated healthchecks.io check for batch-predict failures
 
 **What:** Provision a third healthchecks.io check (e.g. `gotparking-batch-predict`, ~10 min
