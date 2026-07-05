@@ -26,11 +26,13 @@ confirmed). T0 SINPA spike done: GO — the first LightGBM pretrains on the SINP
 dataset and fine-tunes on live 2026 data (`docs/t0-sinpa-spike.md`). T2 schema applied and
 verified live. Provisioning: Phases 1-2 done; Phase 4 (Cloudflare) done — the poller is
 **live** at `https://gotparking-poller.kenzychew.workers.dev`, cron confirmed running every
-5 minutes, 4 of its 6 secrets wired. Phase 5 (Vercel) done — the site is **live** at
-`https://gstack-playground.vercel.app` (see below for what the blocker turned out to be).
-`HEALTHCHECKS_POLLER_PING_URL` still pends Phase 3 (healthchecks.io, not started);
-`BATCH_PREDICT_URL` is now known (`https://gstack-playground.vercel.app/api/batch_predict`)
-but not yet set as a Worker secret. See `docs/provisioning-checklist.md`.
+5 minutes, 5 of its 6 secrets wired. Phase 5 (Vercel) done — the site is **live** at
+`https://gstack-playground.vercel.app` (see below for what the blocker turned out to be),
+independently re-verified (`curl` shows `200` on `/`, `503` with the correct typed error on
+`/api/forecast`, and `X-Vercel-Id: sin1::` confirming the region pin held). The only secret
+still outstanding is `HEALTHCHECKS_POLLER_PING_URL`, blocked on Phase 3 (healthchecks.io, not
+started yet) — `BATCH_PREDICT_URL` is now wired using the real Vercel URL above. See
+`docs/provisioning-checklist.md`.
 
 **All four implementation lanes are done and merged.** T3 (poller): `poller/`, 38/38 tests
 green. T4 (api): `api/`, 113/113 tests green, ruff + mypy clean. T6 (frontend): `frontend/`,
