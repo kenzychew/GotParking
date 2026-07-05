@@ -24,17 +24,20 @@ Eng), and a 2026-07-04 max-effort eng re-review (11 findings, all resolved and f
 see the design doc's GSTACK REVIEW REPORT). T1 signal validation done (all 10 seed carparks
 confirmed). T0 SINPA spike done: GO — the first LightGBM pretrains on the SINPA historical
 dataset and fine-tunes on live 2026 data (`docs/t0-sinpa-spike.md`). T2 schema applied and
-verified live. Provisioning: Phases 1-2 done; Phase 3 (healthchecks.io) done — both
-dead-man's-switch checks created via API, `gotparking-poller` already `up` (real ping
-received), `gotparking-training` deliberately paused until its GitHub Actions secret exists
-(Phase 6b, still open). Phase 4 (Cloudflare) done — the poller is **live** at
-`https://gotparking-poller.kenzychew.workers.dev`, cron confirmed running every 5 minutes,
-**all 6 of its secrets wired**. Phase 5 (Vercel) done — the site is **live** at
-`https://gstack-playground.vercel.app` (see below for what the blocker turned out to be),
-independently re-verified (`curl` shows `200` on `/`, `503` with the correct typed error on
-`/api/forecast`, and `X-Vercel-Id: sin1::` confirming the region pin held). Remaining:
-Phase 6b (GitHub Actions secrets) and Phase 6c (Vercel env vars) — see
-`docs/provisioning-checklist.md`.
+verified live.
+
+**Provisioning (T1.5) is fully complete** — every phase, every platform, every secret. The
+poller is **live** at `https://gotparking-poller.kenzychew.workers.dev` (cron confirmed every
+5 minutes, all 6 secrets wired) and the site is **live** at
+`https://gstack-playground.vercel.app` (independently re-verified: `200` on `/`, a correct
+typed `503` on `/api/forecast`, `X-Vercel-Id: sin1::` confirming the region pin). Both
+healthchecks.io dead-man's-switch checks exist — `gotparking-poller` is already `up`
+(receiving real pings); `gotparking-training` stays intentionally paused until
+`.github/workflows/train.yml` fires on its own weekly schedule and sends its first real ping.
+GitHub Actions and Vercel each have their full set of secrets/env vars wired. See
+`docs/provisioning-checklist.md` for the full trail, including two dashboard-vs-reality
+corrections found along the way (Cloudflare's workers.dev toggle location; Vercel's actual
+deploy blocker, below).
 
 **All four implementation lanes are done and merged.** T3 (poller): `poller/`, 38/38 tests
 green. T4 (api): `api/`, 113/113 tests green, ruff + mypy clean. T6 (frontend): `frontend/`,
@@ -70,7 +73,9 @@ bundle it and the function runtime image lacks it (`/var/task/lib` is on the run
 library path). `regions: ["sin1"]` stays top-level and held: live responses show
 `X-Vercel-Id: sin1::`.
 
-Remaining before full go-live: Phase 3 (healthchecks.io), wire the 2 remaining poller
-secrets (`HEALTHCHECKS_POLLER_PING_URL` after Phase 3; `BATCH_PREDICT_URL`, value now
-known), set the 3 Vercel env vars (Phase 6c — until then `/api/forecast` returns its typed
-503), then the post-deploy verification checklist in the design doc's Observability section.
+**Nothing is deferred anymore.** The only thing left before the app shows real forecasts
+instead of its honest "predictions temporarily unavailable" 503 is data: the poller has been
+live only since 2026-07-05/06, so T5's training job (weekly, next fires on its own schedule)
+hasn't had ~2-3 weeks of history to train against yet — exactly the bootstrap window the
+design doc's Approach A always expected. The post-deploy verification checklist in the
+design doc's Observability section is the next thing worth running once that data exists.

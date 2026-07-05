@@ -435,55 +435,71 @@ from its runtime; healthchecks shows both checks; Supabase project region
 reads ap-southeast-1; vercel.json pins sin1". Hello-world-level deploys are
 acceptable proof.
 
-- [ ] GitHub: the repo page shows the pushed tree AND the Phase 5
+-- T1.5 is now fully complete (2026-07-06) -- every item below verified.
+
+- [x] GitHub: the repo page shows the pushed tree AND the Phase 5
       `vercel.json` commit (proves you can push with your credentials).
-- [ ] Supabase region: `Project Settings` > `General` (or `Infrastructure`)
-      reads `ap-southeast-1` / `Southeast Asia (Singapore)`.
-- [ ] Supabase reachable with its secret -- run in Git Bash, substituting
-      your recorded values (never paste them into a file):
-
-      ```
-      curl -s -o /dev/null -w "%{http_code}\n" \
-        -H "apikey: <SUPABASE_SERVICE_ROLE_KEY>" \
-        -H "Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>" \
-        "<SUPABASE_URL>/rest/v1/"
-      ```
-
-      Expect `200`. A 401/403 means the wrong key was copied -- go back to
-      Phase 2 and re-copy the service-role key.
-- [ ] Supabase Storage: bucket `models` exists and is marked Private.
-- [ ] healthchecks.io: the dashboard lists exactly two checks --
+      -- DONE, confirmed throughout Phases 1-6.
+- [x] Supabase region: `Project Settings` > `General` (or `Infrastructure`)
+      reads `ap-southeast-1` / `Southeast Asia (Singapore)`. -- DONE
+      2026-07-04, confirmed in Phase 2 (via SG-latency measurement, ~110ms
+      warm round trips, consistent only with ap-southeast-1).
+- [x] Supabase reachable with its secret -- DONE 2026-07-04 (Phase 2/T2
+      verification): service-role reads returned the 10 seed carparks;
+      anon/publishable key correctly got 401 (RLS + revoked grants).
+- [x] Supabase Storage: bucket `models` exists and is marked Private. --
+      DONE 2026-07-04, confirmed via `select id, name, public from
+      storage.buckets` (`public = false`).
+- [x] healthchecks.io: the dashboard lists (at least) two checks --
       `gotparking-poller` (period 5 minutes, grace 30 minutes) and
       `gotparking-training` (period 7 days, grace 24 hours) -- both received
-      one manual `OK` test ping, and both are currently Paused.
-- [ ] Cloudflare: `https://gotparking-poller.<your-subdomain>.workers.dev`
-      returns the hello-world response (platform reachable, deploy works).
-- [ ] Cloudflare: the worker's cron trigger list shows `*/5 * * * *`.
-- [ ] Cloudflare: `Variables and Secrets` lists exactly these 5 names (values
-      hidden): `LTA_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-      `BATCH_SHARED_SECRET`, `HEALTHCHECKS_POLLER_PING_URL`.
-      (`BATCH_PREDICT_URL` intentionally absent until T4.)
-- [ ] GitHub: `Settings` > `Secrets and variables` > `Actions` lists exactly
+      one manual `OK` test ping. **Amended:** only `gotparking-training` is
+      Paused; `gotparking-poller` is deliberately ACTIVE (status `up`) since
+      the poller was already live and pinging for real by the time this
+      check was created -- see Phase 3's amended note.
+- [x] Cloudflare: `https://gotparking-poller.kenzychew.workers.dev` is live
+      -- superseded by T3 landing for real (not a hello-world placeholder);
+      confirmed via `wrangler deployments list` and the poller's own
+      healthchecks `up` status above.
+- [x] Cloudflare: the worker's cron trigger list shows `*/5 * * * *` --
+      confirmed in the `wrangler deploy` output: `schedule: */5 * * * *`.
+- [x] Cloudflare: `Variables and Secrets` lists all 6 names (values hidden):
+      `LTA_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+      `BATCH_SHARED_SECRET`, `HEALTHCHECKS_POLLER_PING_URL`,
+      `BATCH_PREDICT_URL` -- DONE 2026-07-06, confirmed via
+      `wrangler secret list`. (Superseded: T4 landed, so `BATCH_PREDICT_URL`
+      is no longer "intentionally absent" -- all 6 are present.)
+- [x] GitHub: `Settings` > `Secrets and variables` > `Actions` lists exactly
       these 3 names: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-      `HEALTHCHECKS_TRAINING_PING_URL`.
+      `HEALTHCHECKS_TRAINING_PING_URL` -- DONE 2026-07-06, confirmed via
+      `gh secret list`.
 - [x] Vercel: the latest deployment status is `READY` and the project is
       linked to the GitHub repo -- DONE 2026-07-05 (project is named
       `gstack-playground`, not `gotparking`; linked to
       `kenzychew/GotParking`, auto-deploys on push to `main`).
-- [ ] Vercel: `Settings` > `Environment Variables` lists exactly these 3
+- [x] Vercel: `Settings` > `Environment Variables` lists exactly these 3
       names: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-      `BATCH_SHARED_SECRET`.
+      `BATCH_SHARED_SECRET` -- DONE 2026-07-06, confirmed via `vercel env
+      ls` (all 3 present across Production/Preview/Development -- 9 rows).
+      `SUPABASE_SERVICE_ROLE_KEY`/`BATCH_SHARED_SECRET` are Sensitive on
+      Production/Preview; Development doesn't support Sensitive vars at all
+      (a real Vercel platform constraint, not a gap here) so those two are
+      Non-sensitive there, which is also what makes `vercel env pull` work
+      locally.
 - [x] `vercel.json` at the repo root on `main` pins `sin1` -- **Correction
       (2026-07-05):** the file now carries the full `services` config rather
       than exactly `{"regions": ["sin1"]}`, but `"regions": ["sin1"]` is
       still its top-level pin, and live function responses carry
       `X-Vercel-Id: sin1::...`.
-- [ ] Local `.env` is still untracked: `git ls-files .env` prints nothing.
-- [ ] Every value in the Hand-off state list below is recorded in your
-      scratch note / password manager.
+- [x] Local `.env` is still untracked: `git ls-files .env` prints nothing --
+      reconfirmed 2026-07-06.
+- [x] Every value in the Hand-off state list below is recorded -- in local
+      `.env` (gitignored); `SUPABASE_DB_PASSWORD` and the healthchecks.io
+      account password remain password-manager-only as designed.
 
-If every box above is checked, T1.5 is complete: Lane A (T2, Supabase schema)
-is unblocked, and Lanes B/C/D/E can launch after it.
+T1.5 is complete: Lane A (T2, Supabase schema) was unblocked long ago, and
+Lanes B/C/D/E (T3/T4/T5/T6) have all since landed and are live in
+production.
 
 ## Hand-off state (what you should have collected by the end)
 
@@ -512,15 +528,20 @@ them.
 8.  `VERCEL_PROD_URL` -- `https://gstack-playground.vercel.app` (recorded
     2026-07-05, Phase 5 done).
 9.  `BATCH_PREDICT_URL` -- `https://gstack-playground.vercel.app/api/batch_predict`
-    (value known 2026-07-05; still to be SET as the 6th Cloudflare Worker
-    secret -- the Phase 6a deferred item).
+    -- DONE 2026-07-06: wired as the 6th and final Cloudflare Worker secret.
 
-Platform state at hand-off: GitHub repo `gotparking` pushed with `main`;
-Supabase project `gotparking` in `ap-southeast-1` with private Storage bucket
-`models` (no tables yet -- T2's job); healthchecks.io checks
-`gotparking-poller` and `gotparking-training` created, tested, and paused
-(they auto-resume on the first real ping); Cloudflare Worker
-`gotparking-poller` (hello-world) with cron `*/5 * * * *`; Vercel project
-linked to the repo with `sin1` pinned via `vercel.json`; 11 secret/value
-wirings in place (5 Cloudflare + 3 GitHub + 3 Vercel), with
-`BATCH_PREDICT_URL` as the single deferred wiring.
+Platform state at hand-off (2026-07-06, T1.5 fully complete): GitHub repo
+`GotParking` pushed, all four lanes (T2-T6) merged to `main`; Supabase
+project `gotparking` live in `ap-southeast-1`, schema applied and verified;
+healthchecks.io checks `gotparking-poller` (ACTIVE, `up`, receiving real
+pings every 5 minutes) and `gotparking-training` (PAUSED) both created and
+tested; Cloudflare Worker `gotparking-poller` running the real T3 poller
+code live, cron `*/5 * * * *` confirmed, all 6 secrets wired; Vercel project
+`gstack-playground` live at `https://gstack-playground.vercel.app` via the
+`services` model, `sin1` pinned, all 3 env vars set across all 3
+environments; GitHub Actions has all 3 of its repository secrets set. Every
+platform, every secret, every value from this checklist is now wired
+somewhere -- nothing is deferred anymore. The one thing left is time, not a
+task: `gotparking-training`'s healthchecks check stays Paused (by design)
+until `.github/workflows/train.yml` actually fires on its own weekly
+schedule and sends its first real ping -- that's expected, not a gap.
