@@ -27,9 +27,20 @@ dataset and fine-tunes on live 2026 data (`docs/t0-sinpa-spike.md`). T2 schema a
 verified live. Provisioning Phases 1-2 complete (`docs/provisioning-checklist.md`); Phases
 3-6 (healthchecks, Cloudflare, Vercel, secrets) in progress.
 
-T3 (poller) done: `poller/`, 38/38 tests green. T4 (api) done: `api/`, 113/113 tests green,
-ruff + mypy clean. T6 (frontend) done: `frontend/`, 70/70 tests green, production build
-clean (installable PWA, offline cache, Public Sans self-hosted). T5 (training) is the last
-lane still building — see the design doc's Implementation Tasks for status. One known gap
-tracked in TODOS.md: batch predict's failure alerting reuses the training job's
-healthchecks check (imprecise but not a functional bug).
+**All four implementation lanes are done and merged.** T3 (poller): `poller/`, 38/38 tests
+green. T4 (api): `api/`, 113/113 tests green, ruff + mypy clean. T6 (frontend): `frontend/`,
+70/70 tests green, production build clean (installable PWA, offline cache, Public Sans
+self-hosted). T5 (training): `training/`, 161/161 tests green, ruff + mypy clean —
+SGT/holiday logic is cross-checked against `api/`'s copy in CI so the two can never silently
+drift. Test Requirements coverage: **49/49 planned paths (100%)** — see the design doc.
+
+Every lane was independently re-verified (tests re-run from a fresh `main` checkout, not
+just the build worktree) before merging. Two real gaps were found this way and handled
+openly rather than swept aside: batch predict's failure alerting currently reuses the
+training job's healthchecks check (imprecise but not a functional bug — tracked in
+TODOS.md); and a training bug where three early-exit cycles skipped without recording a
+`training_runs` audit row was found and fixed directly, with regression tests, before merge.
+
+Remaining before a live deploy: provisioning Phases 3-6 (healthchecks, Cloudflare, Vercel,
+secrets — `docs/provisioning-checklist.md`), then the post-deploy verification checklist in
+the design doc's Observability section.
