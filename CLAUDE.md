@@ -39,18 +39,25 @@ single-URL health-check model only fits the first; the other two are documented
 here so they aren't silently dropped, but are NOT automated by /land-and-deploy.
 
 - Platform: Vercel (primary — the only surface /land-and-deploy manages)
-- Production URL: TBD — provisioning checklist Phase 5 (Vercel project creation)
-  is not done yet. Fill in after `vercel.json` is linked to a real project (the
-  URL will be `https://<project-name>.vercel.app` or a custom domain).
+- Production URL: `https://gstack-playground.vercel.app` (Vercel project
+  `gstack-playground`, named after the local folder rather than `gotparking`;
+  live since 2026-07-05 after the services-model migration in `vercel.json` —
+  see README and `docs/provisioning-checklist.md` Phase 5 for the story)
 - Deploy workflow: auto-deploy on push to `main` (Vercel's default GitHub
-  integration — no explicit GitHub Actions workflow needed for this surface)
-- Deploy status command: none configured (`vercel` CLI not installed locally;
-  `vercel ls --prod` once it is, or check the Vercel dashboard)
+  integration — no explicit GitHub Actions workflow needed for this surface);
+  `npx vercel --prod` from the repo root deploys the local tree directly
+- Deploy status command: `npx vercel ls` (CLI available via npx, logged in)
 - Merge method: N/A — this repo commits straight to `main` (solo project, no PR
   flow yet; see the design doc's Distribution Plan)
 - Project type: web app (PWA frontend) + its serving API, one combined Vercel
-  project per `vercel.json` (`regions: ["sin1"]`, builds `frontend/` via
-  `frontend/dist`, Python functions in `api/` picked up automatically)
+  project using the `services` model in `vercel.json`: three services
+  (`frontend` rooted at `frontend/`; `batch_predict` and `forecast` each
+  rooted at `api/` with file-form Python entrypoints), top-level rewrites
+  exposing them at `/api/batch_predict`, `/api/forecast`, and `/(.*)`;
+  `regions: ["sin1"]` stays top-level and applies to both Python services.
+  Python deps come from `api/requirements.txt`; the `batch_predict` service
+  has a `buildCommand` that copies `libgomp.so.1` into `lib/` (lightgbm's
+  wheel does not bundle it and the function runtime image lacks it)
 - Post-deploy health check: `GET /api/forecast` should return 200 with the
   pinned `{"generated_at", "carparks": [...]}` shape (see `api/_lib/read_logic.py`)
   once the project is live — a 503 with `{"error": "predictions_unavailable"}`

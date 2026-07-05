@@ -1,0 +1,6 @@
+# Runtime deps installed by Vercel for BOTH Python services (batch_predict
+# and forecast are each rooted at api/ in vercel.json). Root requirements.txt
+# mirrors this file for repo-level visibility -- keep the two in lockstep.
+lightgbm==4.6.0
+numpy==2.5.0
+httpx==0.28.1

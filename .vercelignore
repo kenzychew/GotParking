@@ -1,0 +1,32 @@
+# Local dev-only tooling for api/ and training/ (uv-managed pytest/ruff/mypy).
+# Vercel's Python runtime deps come from api/requirements.txt (each Python
+# service in vercel.json is rooted at api/ and installs from there). Keeping
+# api/pyproject.toml + api/uv.lock out of the upload matters: a service
+# rooted at api/ would otherwise read them as the dependency manifest and
+# deploy the dev-only toolchain instead of the runtime deps.
+api/pyproject.toml
+api/uv.lock
+api/tests
+api/.venv
+api/.pytest_cache
+api/__pycache__
+
+training/
+
+# Never upload env files (.vercelignore replaces .gitignore for uploads)
+# or local dependency trees.
+.env*
+**/node_modules
+
+# Not consumed by the Vercel build: poller/ deploys via wrangler; data/,
+# db/, docs/, scripts/, .github/ are repo-side only. Python functions
+# bundle "all reachable files" (no tree-shaking), so keeping these out of
+# the upload also keeps them out of the function bundles (225 MB cap).
+poller/
+data/
+db/
+docs/
+scripts/
+.github/
+.gstack/
+*.md

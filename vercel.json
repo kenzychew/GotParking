@@ -1,5 +1,23 @@
 {
   "regions": ["sin1"],
-  "buildCommand": "cd frontend && npm ci && npm run build",
-  "outputDirectory": "frontend/dist"
+  "services": {
+    "frontend": {
+      "root": "frontend/"
+    },
+    "batch_predict": {
+      "root": "api/",
+      "framework": "python",
+      "entrypoint": "batch_predict.py",
+      "buildCommand": "D=lib; [ -d _lib ] || D=api/lib; mkdir -p $D && cp -v \"$(gcc -print-file-name=libgomp.so.1)\" $D/ && ls -la $D"
+    },
+    "forecast": {
+      "root": "api/",
+      "entrypoint": "forecast.py"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/batch_predict", "destination": { "service": "batch_predict" } },
+    { "source": "/api/forecast", "destination": { "service": "forecast" } },
+    { "source": "/(.*)", "destination": { "service": "frontend" } }
+  ]
 }

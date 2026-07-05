@@ -260,47 +260,69 @@ Notes:
 
 ## Phase 5: Vercel -- project import + `sin1` region pin
 
+-- DONE 2026-07-05, via CLI rather than the dashboard import flow sketched
+below (all four code lanes had already merged, so Phase 5 and the first real
+deploy happened together, mirroring how Phase 4 played out). Actual sequence:
+the repo was linked to a CLI-created project named `gstack-playground` (named
+after the local folder, NOT `gotparking` as assumed below), and
+`npx vercel --prod` from the repo root deploys it. The first deploys failed
+on a real platform issue -- import auto-detected Framework Preset `python`
+from the root `requirements.txt`, which makes Vercel demand a single Python
+entrypoint for the whole repo and ignore the per-file `api/` convention
+entirely -- and the working fix was migrating `vercel.json` to Vercel's
+`services` model (three services: `frontend`, plus `batch_predict` and
+`forecast` rooted at `api/` with file-form entrypoints and deps from
+`api/requirements.txt`, exposed via top-level rewrites at the unchanged
+paths `/api/batch_predict` and `/api/forecast`), plus a `buildCommand` on
+the batch service copying `libgomp.so.1` into `lib/` for lightgbm. Full
+story in the README's "Vercel deploy: fixed" paragraph.
+
 Vercel's default serverless-function region is `iad1` (Washington, D.C.) --
 it MUST be changed to `sin1` (Singapore). The Hobby plan allows pinning
 exactly one region, and the pin lives in `vercel.json` in the repo (design
 doc D7 / Premise #9 as amended).
 
-- [ ] FIRST, pin the region in the repo so Vercel's very first deploy already
-      carries it. In `C:\Users\kenzy\gstack-playground` on `main`, create the
-      file `vercel.json` at the repo root with exactly this content:
+- [x] FIRST, pin the region in the repo so Vercel's very first deploy already
+      carries it. **Correction (found live, 2026-07-05):** the file no longer
+      contains ONLY the region pin -- it now carries the full `services`
+      config -- but `"regions": ["sin1"]` remains at the top level, which in
+      services mode still applies to every Python service.
+- [x] Commit and push it -- DONE (the evolving `vercel.json` has been
+      committed throughout; the final services-model version landed
+      2026-07-05).
+- [x] Sign up / sign in -- DONE 2026-07-05: CLI session as `kenzychew-1249`
+      (Hobby plan) with the GitHub integration active (pushes to `main`
+      auto-deploy).
+- [x] Import the project -- superseded: created/linked via CLI as
+      `gstack-playground` instead of a dashboard import named `gotparking`.
+      Harmless beyond the URL differing from the one this checklist guessed.
+- [x] Configure the import: Framework Preset `Other` -- **Correction (this
+      assumption was the deploy blocker):** the import auto-detected
+      Framework Preset `python` (from the root `requirements.txt`), and under
+      that preset Vercel requires ONE Python entrypoint for the whole repo --
+      the documented "each file in api/ becomes its own function" convention
+      is never consulted. Resolved in-repo by the `services` migration above
+      (`vercel.json` is authoritative; the dashboard preset no longer
+      matters in services mode).
+- [x] Wait for the deployment to reach status `READY` -- DONE 2026-07-05:
+      production deploy READY on the first successful services build; the
+      root URL serves the T6 PWA (the "404 is fine" hedge below was written
+      for a pre-T6 hello-world deploy that never needed to exist).
+- [x] Record the production URL -> `VERCEL_PROD_URL` =
+      `https://gstack-playground.vercel.app`. `BATCH_PREDICT_URL` =
+      `https://gstack-playground.vercel.app/api/batch_predict` (T4 kept the
+      guessed path). Verified live: `GET /` returns the PWA shell (200);
+      `GET /api/forecast` returns the typed 503 (`predictions_unavailable`)
+      until Phase 6c wires the env vars -- exactly the designed
+      missing-config behavior, and proof the function runs.
+- [x] Optional cross-check: dashboard region -- superseded: the committed
+      `vercel.json` is the authoritative pin, and live responses from both
+      Python functions carry `X-Vercel-Id: sin1::...`, confirming the pin
+      empirically.
 
-      ```json
-      {
-        "regions": ["sin1"]
-      }
-      ```
-
-- [ ] Commit and push it:
-      - `git add vercel.json`
-      - `git commit -m "chore: pin Vercel functions to sin1 (T1.5, D7)"`
-      - `git push`
-- [ ] Sign up / sign in at `https://vercel.com` using your GitHub account
-      (Hobby plan, free) and grant it access to the `gotparking` repo when
-      asked.
-- [ ] `Add New...` > `Project` > Import `gotparking`.
-- [ ] Configure the import: Framework Preset `Other`; leave Root Directory
-      (`./`), Build Command, Output Directory, and Install Command at their
-      defaults (T4/T6 will set real build config later). Click `Deploy`.
-- [ ] Wait for the deployment to reach status `READY`. A 404 at the root URL
-      is fine at this stage -- no frontend exists until T6 and no functions
-      until T4; a READY deployment is the hello-world-level proof for this
-      platform.
-- [ ] Record the production URL shown on the project page (format
-      `https://gotparking.vercel.app`, possibly with a suffix if the name was
-      taken) -> record as `VERCEL_PROD_URL`. The future `BATCH_PREDICT_URL`
-      will be `<VERCEL_PROD_URL>` plus the batch endpoint path once T4 lands
-      (path is T4's to name, e.g. `/api/batch_predict`).
-- [ ] Optional cross-check: `Project Settings` > `Functions` > set the
-      function region to `Singapore (sin1)` so the dashboard agrees with the
-      repo. (Menu names may drift; the committed `vercel.json` is the
-      authoritative pin per the design doc, and it overrides the dashboard.)
-
-Note: environment variables are wired in Phase 6c.
+Note: environment variables are wired in Phase 6c (still pending -- until
+then `/api/forecast` serves its typed 503 and `/api/batch_predict` its typed
+JSON 500).
 
 ## Phase 6: Secrets wiring
 
@@ -358,6 +380,10 @@ log).
 - [ ] Deferred -- after T4's first deploy: `BATCH_PREDICT_URL` =
       `<VERCEL_PROD_URL>` + the batch endpoint path. Leave it unset today; do
       NOT block T1.5 completion on it. (Tracked again in the Hand-off list.)
+      -- UPDATE 2026-07-05: the value is now known
+      (`https://gstack-playground.vercel.app/api/batch_predict`, Phase 5
+      done); the secret itself is still unset -- wire it with
+      `wrangler secret put BATCH_PREDICT_URL` from `poller/` when ready.
 
 ### Phase 6b: GitHub Actions repository secrets (3)
 
@@ -420,14 +446,18 @@ acceptable proof.
 - [ ] GitHub: `Settings` > `Secrets and variables` > `Actions` lists exactly
       these 3 names: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
       `HEALTHCHECKS_TRAINING_PING_URL`.
-- [ ] Vercel: the latest deployment status is `READY` and the project is
-      linked to the `gotparking` GitHub repo.
+- [x] Vercel: the latest deployment status is `READY` and the project is
+      linked to the GitHub repo -- DONE 2026-07-05 (project is named
+      `gstack-playground`, not `gotparking`; linked to
+      `kenzychew/GotParking`, auto-deploys on push to `main`).
 - [ ] Vercel: `Settings` > `Environment Variables` lists exactly these 3
       names: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
       `BATCH_SHARED_SECRET`.
-- [ ] `vercel.json` at the repo root on `main` contains exactly
-      `{"regions": ["sin1"]}` -- check with `git show origin/main:vercel.json`
-      or view the file on GitHub.
+- [x] `vercel.json` at the repo root on `main` pins `sin1` -- **Correction
+      (2026-07-05):** the file now carries the full `services` config rather
+      than exactly `{"regions": ["sin1"]}`, but `"regions": ["sin1"]` is
+      still its top-level pin, and live function responses carry
+      `X-Vercel-Id: sin1::...`.
 - [ ] Local `.env` is still untracked: `git ls-files .env` prints nothing.
 - [ ] Every value in the Hand-off state list below is recorded in your
       scratch note / password manager.
@@ -459,10 +489,11 @@ them.
     T3 (success ping per cycle, `/fail` on hard failures).
 7.  `HEALTHCHECKS_TRAINING_PING_URL` -- wired into: GitHub Actions. Consumed
     by: T5 (weekly completion ping, `/fail` on crash/upload failure).
-8.  `VERCEL_PROD_URL` -- base of the future `BATCH_PREDICT_URL`.
-9.  `BATCH_PREDICT_URL` -- PENDING: `<VERCEL_PROD_URL>` + batch endpoint
-    path, known only after T4's first deploy; when known, set it as the 6th
-    Cloudflare Worker secret (the Phase 6a deferred item).
+8.  `VERCEL_PROD_URL` -- `https://gstack-playground.vercel.app` (recorded
+    2026-07-05, Phase 5 done).
+9.  `BATCH_PREDICT_URL` -- `https://gstack-playground.vercel.app/api/batch_predict`
+    (value known 2026-07-05; still to be SET as the 6th Cloudflare Worker
+    secret -- the Phase 6a deferred item).
 
 Platform state at hand-off: GitHub repo `gotparking` pushed with `main`;
 Supabase project `gotparking` in `ap-southeast-1` with private Storage bucket

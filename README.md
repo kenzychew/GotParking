@@ -26,9 +26,11 @@ confirmed). T0 SINPA spike done: GO — the first LightGBM pretrains on the SINP
 dataset and fine-tunes on live 2026 data (`docs/t0-sinpa-spike.md`). T2 schema applied and
 verified live. Provisioning: Phases 1-2 done; Phase 4 (Cloudflare) done — the poller is
 **live** at `https://gotparking-poller.kenzychew.workers.dev`, cron confirmed running every
-5 minutes, 4 of its 6 secrets wired (`HEALTHCHECKS_POLLER_PING_URL` and `BATCH_PREDICT_URL`
-still pending Phases 3 and 5). Phase 5 (Vercel) is blocked on a real platform issue — see
-below. Phase 3 (healthchecks.io) not started yet. See `docs/provisioning-checklist.md`.
+5 minutes, 4 of its 6 secrets wired. Phase 5 (Vercel) done — the site is **live** at
+`https://gstack-playground.vercel.app` (see below for what the blocker turned out to be).
+`HEALTHCHECKS_POLLER_PING_URL` still pends Phase 3 (healthchecks.io, not started);
+`BATCH_PREDICT_URL` is now known (`https://gstack-playground.vercel.app/api/batch_predict`)
+but not yet set as a Worker secret. See `docs/provisioning-checklist.md`.
 
 **All four implementation lanes are done and merged.** T3 (poller): `poller/`, 38/38 tests
 green. T4 (api): `api/`, 113/113 tests green, ruff + mypy clean. T6 (frontend): `frontend/`,
@@ -44,16 +46,27 @@ training job's healthchecks check (imprecise but not a functional bug — tracke
 TODOS.md); and a training bug where three early-exit cycles skipped without recording a
 `training_runs` audit row was found and fixed directly, with regression tests, before merge.
 
-**Vercel deploy is currently blocked.** `vercel --prod` fails with "No python entrypoint
-found in default locations" despite `api/batch_predict.py` and `api/forecast.py` each
-correctly defining their own `handler` class — the documented "each file becomes its own
-function" convention doesn't seem to hold when a top-level `buildCommand` (for the frontend)
-also exists in the same `vercel.json`. Three fixes tried and failed (excluding
-`api/pyproject.toml`; an empty `functions` block; `functions` with `maxDuration` set).
-Leading theory: this project's shape (frontend + independent Python functions in one
-project) needs Vercel's newer `services` model instead of the plain `api/` convention —
-untried as of this writing. See the design doc for full details once resolved.
+**Vercel deploy: fixed 2026-07-05.** The "No python entrypoint found in default locations"
+error was NOT caused by the repo's file layout — the linked Vercel project had Framework
+Preset `python` (auto-detected at import time from the root `requirements.txt`), and under
+that preset Vercel treats the whole repo as ONE Python app needing a single entrypoint; the
+per-file `api/` convention is never consulted, which is why `.vercelignore` and `functions`
+tweaks changed nothing. `"framework": null` in `vercel.json` cleared that error but then hit
+a hard 225 MB Python bundle cap (both functions bundle all of `lightgbm`+`scipy`+`numpy` from
+one shared `requirements.txt`, ~228 MB even after Vercel's own optimization). The working fix
+is Vercel's `services` model: three services (`frontend`; `batch_predict` and `forecast` each
+rooted at `api/`, installing from `api/requirements.txt`, each with its own per-service
+bundle) plus top-level rewrites preserving the original `/api/batch_predict` and
+`/api/forecast` paths. Two implementation gotchas, both confirmed against the
+`@vercel/python` builder source: service entrypoints must be file-form (`"forecast.py"`) —
+the `module:variable` form triggers a validator that rejects `handler` *classes* (it only
+accepts functions, though detection itself understands classes) — and `lightgbm` needs a
+one-line service `buildCommand` copying `libgomp.so.1` into `lib/`, because the wheel doesn't
+bundle it and the function runtime image lacks it (`/var/task/lib` is on the runtime's
+library path). `regions: ["sin1"]` stays top-level and held: live responses show
+`X-Vercel-Id: sin1::`.
 
-Remaining before a live deploy: finish provisioning (Phase 3 healthchecks, Phase 5 Vercel —
-blocked, see above), wire the 2 remaining poller secrets once their dependencies exist, then
-the post-deploy verification checklist in the design doc's Observability section.
+Remaining before full go-live: Phase 3 (healthchecks.io), wire the 2 remaining poller
+secrets (`HEALTHCHECKS_POLLER_PING_URL` after Phase 3; `BATCH_PREDICT_URL`, value now
+known), set the 3 Vercel env vars (Phase 6c — until then `/api/forecast` returns its typed
+503), then the post-deploy verification checklist in the design doc's Observability section.

@@ -38,7 +38,8 @@ then to baseline-for-everyone plus a `/fail` ping -- `carpark_forecast` is never
 and neither endpoint raises a raw 500).
 
 Test framework: pytest, run locally via `uv run pytest` from this directory. `api/pyproject.toml`
-holds the dev-only pytest dependency; the runtime deps actually deployed to Vercel stay in the
-root `requirements.txt` (`lightgbm`, `numpy`, `httpx` only).
+holds the dev-only pytest dependency; the runtime deps actually deployed to Vercel live in
+`api/requirements.txt` (`lightgbm`, `numpy`, `httpx` only -- Vercel's per-service builds read
+this copy; the root `requirements.txt` is a human-facing mirror kept in lockstep).
 
 Design doc: `~/.gstack/projects/gstack-playground/kenzy-unknown-design-20260702-210951.md`
