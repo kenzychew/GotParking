@@ -172,39 +172,59 @@ Notes:
 
 ## Phase 3: healthchecks.io -- two dead-man's-switch checks
 
+-- DONE 2026-07-06, via the API (`POST /api/v3/checks/` with an `X-Api-Key`
+read-write key from Project Settings) rather than the dashboard click-path
+below, since by this point the poller was already live (T3/Phase 4 done) and
+using the API avoided guessing at dashboard field names for schedule/grace
+(the pattern that went wrong twice on Cloudflare's dashboard earlier in this
+project). The account already existed with a default "My First Check" demo
+check (1 day/1 hour schedule) from signup -- harmless, left alone.
+
 Alerting is absence-based (design doc Premise #8): jobs prove liveness by
 pinging; when pings stop, healthchecks.io emails you. Free tier: 20 checks,
 email alerts included. Failure signaling needs no extra setup -- jobs append
 `/fail` to the same ping URL to report hard failures with a reason.
 
-- [ ] Create a free account at `https://healthchecks.io` using the email
+- [x] Create a free account at `https://healthchecks.io` using the email
       address where you want alerts delivered (you are the alert owner --
       solo project, no on-call rotation; design doc Security section).
-- [ ] Create check 1: `Add Check`, then set:
+      -- DONE (kenzychew@gmail.com).
+- [x] Create check 1: `Add Check`, then set:
       - Name: `gotparking-poller`
       - Schedule (Simple): Period = `5 minutes`, Grace = `30 minutes`
         (matches Premise #8: pings stop for >30 minutes -> email)
-- [ ] Copy check 1's ping URL (format `https://hc-ping.com/<uuid>`) -> record
-      as `HEALTHCHECKS_POLLER_PING_URL`.
-- [ ] Create check 2: `Add Check`, then set:
+      -- DONE 2026-07-06 via API (`timeout=300, grace=1800` -- API fields are
+      in seconds, not the dashboard's minutes/hours units).
+- [x] Copy check 1's ping URL (format `https://hc-ping.com/<uuid>`) -> record
+      as `HEALTHCHECKS_POLLER_PING_URL`. -- DONE, saved to `.env` (API
+      response included it directly, no dashboard copy step needed).
+- [x] Create check 2: `Add Check`, then set:
       - Name: `gotparking-training`
       - Schedule (Simple): Period = `7 days` (1 week), Grace = `24 hours`
         (catches both training crashes and the job never running at all,
         e.g. GitHub's 60-day auto-disable -- Premise #8 / D2)
-- [ ] Copy check 2's ping URL -> record as `HEALTHCHECKS_TRAINING_PING_URL`.
-- [ ] Confirm email alerting is enabled on BOTH checks: each check's detail
-      page lists the `Email to <your address>` integration as on (usually on
-      by default for new checks; if missing, enable it under `Integrations`).
-      (Menu names may drift; the setting to find is which notification
-      channels each check uses.)
-- [ ] Test the alert path for check 1:
-      `curl -fsS <HEALTHCHECKS_POLLER_PING_URL>` (Git Bash; use `curl.exe` in
-      PowerShell) -- expect the response `OK` and the check flipping to "up".
-- [ ] Same test ping for `<HEALTHCHECKS_TRAINING_PING_URL>` -- expect `OK`.
-- [ ] Now PAUSE both checks (Pause button on each check's page) so they do
-      not fire DOWN emails while no poller or training job exists yet. A
-      paused check resumes monitoring automatically when the next real ping
-      arrives, so nothing needs to be done here when T3/T5 go live.
+      -- DONE 2026-07-06 via API (`timeout=604800, grace=86400`).
+- [x] Copy check 2's ping URL -> record as `HEALTHCHECKS_TRAINING_PING_URL`.
+      -- DONE, saved to `.env`.
+- [x] Confirm email alerting is enabled on BOTH checks -- DONE: created both
+      with `"channels":"*"` (attaches every available integration on the
+      account, which for a fresh account is just the default email
+      integration); verified via API afterward that both checks show
+      `channels_count=1`.
+- [x] Test the alert path for check 1: `curl -fsS <HEALTHCHECKS_POLLER_PING_URL>`
+      -- DONE, returned `OK`; check flipped to `up` (confirmed via API).
+- [x] Same test ping for `<HEALTHCHECKS_TRAINING_PING_URL>` -- DONE, returned
+      `OK`.
+- [x] Now PAUSE both checks -- **amended**: only check 2 (`gotparking-training`)
+      was paused (via `POST /api/v3/checks/<uuid>/pause`), since the training
+      job's ping URL isn't wired into GitHub Actions secrets yet (Phase 6b,
+      still open) and the workflow only runs weekly -- a real gap of up to 7
+      days before it could ping for real. Check 1 (`gotparking-poller`) was
+      deliberately left ACTIVE, not paused: the poller was already live and
+      `HEALTHCHECKS_POLLER_PING_URL` was wired to its Cloudflare secret in the
+      same session, so a real ping arrives within 5 minutes -- pausing it
+      would have been pure ceremony for a false-alarm window that was never
+      going to open.
 
 ## Phase 4: Cloudflare -- Workers project + 5-minute cron
 
@@ -370,29 +390,29 @@ log).
 - [x] `SUPABASE_SERVICE_ROLE_KEY` = the recorded value -- DONE 2026-07-05.
 - [x] `BATCH_SHARED_SECRET` = the value of `BATCH_SHARED_SECRET` from your
       local `.env` -- DONE 2026-07-05.
-- [ ] `HEALTHCHECKS_POLLER_PING_URL` = the recorded value -- still blocked on
-      Phase 3 (healthchecks.io checks not yet created). The poller already
-      handles this gracefully: it logs and skips the ping when the env var
-      is unset, so this is not blocking anything else.
+- [x] `HEALTHCHECKS_POLLER_PING_URL` = the recorded value -- DONE 2026-07-06.
+      `wrangler secret list` confirms it's set -- this was the 6th and final
+      poller secret; all six are now wired.
 - [x] Click `Deploy` / apply if the dashboard asks to deploy the changes --
       N/A via CLI; `wrangler secret put` applies immediately, no separate
       deploy step needed for a secret change.
-- [ ] Deferred -- after T4's first deploy: `BATCH_PREDICT_URL` =
-      `<VERCEL_PROD_URL>` + the batch endpoint path. Leave it unset today; do
-      NOT block T1.5 completion on it. (Tracked again in the Hand-off list.)
-      -- UPDATE 2026-07-05: the value is now known
-      (`https://gstack-playground.vercel.app/api/batch_predict`, Phase 5
-      done); the secret itself is still unset -- wire it with
-      `wrangler secret put BATCH_PREDICT_URL` from `poller/` when ready.
+- [x] `BATCH_PREDICT_URL` = `<VERCEL_PROD_URL>` + the batch endpoint path --
+      DONE 2026-07-05/06: value is
+      `https://gstack-playground.vercel.app/api/batch_predict` (Phase 5
+      done), wired via `wrangler secret put BATCH_PREDICT_URL`.
 
-### Phase 6b: GitHub Actions repository secrets (3)
+### Phase 6b: GitHub Actions repository secrets (3) -- still open
 
 Path: `github.com/<your-username>/gotparking` > `Settings` >
 `Secrets and variables` > `Actions` > `New repository secret`.
 
 - [ ] `SUPABASE_URL` = the recorded value
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` = the recorded value
-- [ ] `HEALTHCHECKS_TRAINING_PING_URL` = the recorded value
+- [ ] `HEALTHCHECKS_TRAINING_PING_URL` = the recorded value -- the VALUE is
+      known and saved in `.env` (Phase 3 done, 2026-07-06); only the
+      wiring-into-GitHub step itself remains. The training check is
+      currently PAUSED on healthchecks.io until this is wired and the first
+      real weekly ping arrives.
 
 ### Phase 6c: Vercel environment variables (3)
 
