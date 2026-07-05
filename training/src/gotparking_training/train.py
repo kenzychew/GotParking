@@ -74,12 +74,18 @@ class RunResult:
     """Outcome of one training run.
 
     Attributes:
-        candidate_version: The candidate's version string, or None if no
-            candidate was trained this cycle (e.g. no eligible carparks).
-        phase: "first_promotion" or "retrain", or None if no candidate was
-            trained.
+        candidate_version: The version identifier assigned to this training
+            CYCLE (computed from the cycle's start time up front), whether
+            or not a candidate was ultimately trained, backtested, or
+            promoted under it -- every cycle gets one, since every cycle
+            produces a `training_runs` audit row (design doc step 8:
+            "ALWAYS insert a training_runs row").
+        phase: "first_promotion" or "retrain" (see gate.py), computed from
+            `model_config.active_model_version` up front -- always present,
+            even for a cycle that stops before training a candidate.
         promoted: Whether a candidate was promoted this cycle.
-        mae_candidate: Candidate MAE on holdout, or None if not computed.
+        mae_candidate: Candidate MAE on holdout, or None if a candidate was
+            never trained/backtested this cycle (a skipped cycle).
         mae_baseline: Historical-average comparator MAE, or None.
         mae_persistence: Persistence comparator MAE, or None.
         mae_incumbent: Incumbent MAE (retrain phase only), or None.
@@ -87,8 +93,8 @@ class RunResult:
         notes: Free-text summary of what happened.
     """
 
-    candidate_version: str | None
-    phase: str | None
+    candidate_version: str
+    phase: str
     promoted: bool
     mae_candidate: float | None
     mae_baseline: float | None
@@ -129,11 +135,42 @@ class TrainDeps:
     holdout_days: int = HOLDOUT_DAYS
 
 
-def _skip_result(phase: str | None, used_sinpa: bool, notes: str) -> RunResult:
-    """Build a RunResult for a cycle that stops before training a candidate."""
+def _skip_result(
+    db: SupabaseClient,
+    candidate_version: str,
+    phase: str,
+    used_sinpa: bool,
+    notes: str,
+    ran_at: datetime,
+) -> RunResult:
+    """Record and return a RunResult for a cycle that stops before training
+    a candidate (e.g. no eligible carparks, or an empty holdout window).
+
+    Per the design doc's step 8 ("ALWAYS insert a training_runs row"), a
+    skipped cycle is still a completed cycle from the audit trail's point
+    of view -- without this, a run of weeks where every cycle skips (e.g.
+    a data-quality issue upstream) would be silently invisible in
+    `training_runs`, indistinguishable from the job never having run at
+    all (which the healthchecks weekly-ping check already covers
+    separately; this is the OTHER failure mode -- ran, but had nothing to
+    train on).
+    """
     logger.warning("training run skipped this cycle: %s", notes)
+    insert_training_run(
+        db,
+        candidate_version=candidate_version,
+        phase=phase,
+        mae_candidate=None,
+        mae_baseline=None,
+        mae_persistence=None,
+        mae_incumbent=None,
+        used_sinpa=used_sinpa,
+        promoted=False,
+        notes=notes,
+        ran_at=ran_at,
+    )
     return RunResult(
-        candidate_version=None,
+        candidate_version=candidate_version,
         phase=phase,
         promoted=False,
         mae_candidate=None,
@@ -170,19 +207,36 @@ def run(deps: TrainDeps) -> RunResult:
     now = deps.clock()
     logger.info("training run started at %s", now.isoformat())
 
+    # Computed up front, before any early-exit check, so every possible
+    # return path -- including a cycle that skips before training a
+    # candidate -- has a real (candidate_version, phase) pair to record in
+    # the training_runs audit row (design doc step 8: "ALWAYS insert a
+    # training_runs row"). `candidate_version` is a per-cycle identifier
+    # here, not a claim that an artifact was uploaded under it -- `notes`
+    # and `promoted` disambiguate what actually happened.
+    active_version = load_active_model_version(deps.db)
+    phase = gate.determine_phase(active_version)
+    candidate_version = make_version(now)
+
     all_carparks = load_active_carparks(deps.db)
     history = load_carpark_history(deps.db)
     eligible_carparks = filter_eligible_carparks(all_carparks, history, now)
 
     if not eligible_carparks:
-        return _skip_result(None, False, "no eligible carparks (all cold-start or no carparks)")
+        return _skip_result(
+            deps.db, candidate_version, phase, False,
+            "no eligible carparks (all cold-start or no carparks)", now,
+        )
 
     live_rows: list[TrainingRow] = []
     for carpark in eligible_carparks:
         live_rows.extend(build_rows_from_series(carpark.carpark_id, history[carpark.carpark_id]))
 
     if not live_rows:
-        return _skip_result(None, False, "no labeled rows survived the join tolerance")
+        return _skip_result(
+            deps.db, candidate_version, phase, False,
+            "no labeled rows survived the join tolerance", now,
+        )
 
     cutoff = max(row.target_time for row in live_rows) - timedelta(days=deps.holdout_days)
     pre_holdout = [row for row in live_rows if row.target_time < cutoff]
@@ -212,7 +266,10 @@ def run(deps: TrainDeps) -> RunResult:
         logger.info("no SINPA-mapped carparks in the whitelist; training live-only")
 
     if not pre_holdout:
-        return _skip_result(None, used_sinpa, "no pre-holdout rows to train on")
+        return _skip_result(
+            deps.db, candidate_version, phase, used_sinpa,
+            "no pre-holdout rows to train on", now,
+        )
 
     candidate = train_candidate(
         pre_holdout,
@@ -221,11 +278,11 @@ def run(deps: TrainDeps) -> RunResult:
         num_boost_round=deps.num_boost_round,
     )
 
-    active_version = load_active_model_version(deps.db)
-    phase = gate.determine_phase(active_version)
-
     if not holdout:
-        return _skip_result(phase, used_sinpa, "empty holdout window across all carparks")
+        return _skip_result(
+            deps.db, candidate_version, phase, used_sinpa,
+            "empty holdout window across all carparks", now,
+        )
 
     hist_avg_table = build_historical_average(pre_holdout)
     carpark_mean_table = build_carpark_mean(pre_holdout)
@@ -247,7 +304,6 @@ def run(deps: TrainDeps) -> RunResult:
 
     promoted = gate.decide_promotion(phase, mae_candidate, mae_baseline, mae_persistence,
                                       mae_incumbent)
-    candidate_version = make_version(now)
 
     logger.info(
         "backtest complete: phase=%s mae_candidate=%.4f mae_baseline=%.4f "

@@ -158,6 +158,96 @@ class TestLoadHappyPathAndColdStartWiring:
         assert any(t == "carpark_history" for t, _ in db.select_calls)
 
 
+class TestSkippedCyclesAlwaysRecordAnAuditRow:
+    """A cycle that stops before training a candidate is still a completed
+    cycle from the audit trail's point of view (design doc step 8: "ALWAYS
+    insert a training_runs row"). Without this, weeks where a cycle skips
+    (e.g. an upstream data-quality issue) would be silently invisible in
+    `training_runs` -- indistinguishable from the job never having run at
+    all (which the healthchecks weekly-ping check already covers
+    separately; this is the OTHER failure mode: ran, but had nothing to
+    train on).
+
+    Each test also asserts `result.candidate_version`/`result.phase` are
+    real, non-None values -- both are computed up front in `run()`, before
+    any early-exit check, specifically so every RunResult (skipped or not)
+    has an identifier and a phase to attach to its audit row.
+    """
+
+    def _assert_skip_recorded(self, result: RunResult, db: FakeSupabaseDB, expected_notes: str) -> None:
+        assert result.promoted is False
+        assert result.mae_candidate is None
+        assert result.mae_baseline is None
+        assert result.mae_persistence is None
+        assert result.mae_incumbent is None
+        assert result.notes == expected_notes
+        assert result.candidate_version  # non-empty string, not None
+        assert result.phase == PHASE_FIRST_PROMOTION  # active_model_version is None in _base_db
+
+        rows = db.inserted.get("training_runs", [])
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["candidate_version"] == result.candidate_version
+        assert row["phase"] == result.phase
+        assert row["promoted"] is False
+        assert row["notes"] == expected_notes
+        assert row["mae_candidate"] is None
+        assert row["mae_baseline"] is None
+        assert row["mae_persistence"] is None
+        assert row["mae_incumbent"] is None
+
+    def test_no_eligible_carparks_records_a_skip_row(self) -> None:
+        """Test Requirements: a carpark whitelist with zero history rows is
+        cold-start-excluded entirely -- there is nothing to train on, but
+        the cycle still records why.
+        """
+        now = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        db = _base_db([])  # zero carpark_history rows -> the one whitelisted carpark is cold-start
+        deps = _make_deps(db, now)
+
+        result = run(deps)
+
+        self._assert_skip_recorded(
+            result, db, "no eligible carparks (all cold-start or no carparks)"
+        )
+
+    def test_no_labeled_rows_survive_join_tolerance_records_a_skip_row(self) -> None:
+        """A carpark can clear the cold-start bar (enough age, enough raw
+        samples) yet still yield zero TRAINING rows if its polling cadence
+        never lands within the +/-2.5min join tolerance of any momentum
+        offset or the label horizon. A 23-minute step (not a divisor of
+        15/30/60/20) deterministically misses every join for every
+        interior sample, without relying on statistical luck.
+        """
+        start = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        rows = _slot_dependent_history_rows("1", start, n_ticks=200, step_minutes=23)
+        now = start + timedelta(minutes=23 * 200) + timedelta(hours=1)  # >=72h after first sample
+        db = _base_db(rows)
+        deps = _make_deps(db, now)
+
+        result = run(deps)
+
+        self._assert_skip_recorded(result, db, "no labeled rows survived the join tolerance")
+
+    def test_no_pre_holdout_rows_records_a_skip_row(self) -> None:
+        """A carpark whose entire (short) data span falls inside the
+        holdout window has nothing left to train on, even though it has
+        genuinely-eligible, genuinely-joinable rows. Constructed here via a
+        `holdout_days` far larger than the carpark's actual data span (1
+        day of clean 5-minute-interval history), so every row's target_time
+        is >= the run-wide cutoff.
+        """
+        start = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        rows = _slot_dependent_history_rows("1", start, n_ticks=288, step_minutes=5)  # 1 day
+        now = start + timedelta(hours=100)  # eligibility only needs first-sample age >= 72h
+        db = _base_db(rows)
+        deps = _make_deps(db, now, holdout_days=10)
+
+        result = run(deps)
+
+        self._assert_skip_recorded(result, db, "no pre-holdout rows to train on")
+
+
 class TestBeatsBothComparatorsPromotes:
     """Test Requirements case 5 (train happy path) and case 7 (beats both
     comparators -> promotes, phase 1)."""
@@ -433,7 +523,10 @@ class TestMainEntryPoint:
         monkeypatch.setattr("gotparking_training.train.SupabaseREST", _FakeSupabaseRESTClass)
         monkeypatch.setattr(
             "gotparking_training.train.run",
-            lambda deps: RunResult(None, None, False, None, None, None, None, False, "ok"),
+            lambda deps: RunResult(
+                "lgbm_20260706_050000", PHASE_FIRST_PROMOTION, False,
+                None, None, None, None, False, "ok",
+            ),
         )
         monkeypatch.setattr(
             "gotparking_training.train.ping_success", lambda url: pings["success"].append(url)
