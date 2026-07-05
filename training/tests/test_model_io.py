@@ -77,7 +77,7 @@ class TestUploadModelArtifact:
         # lightgbm.Booster(model_str=<decoded utf-8 text>).
         reloaded = lightgbm.Booster(model_str=content.decode("utf-8"))
         sample = np.zeros((1, 7))
-        assert reloaded.predict(sample).shape == (1,)
+        assert np.asarray(reloaded.predict(sample)).shape == (1,)
 
 
 class TestDownloadIncumbentBooster:
@@ -91,7 +91,7 @@ class TestDownloadIncumbentBooster:
 
         assert db.download_calls == ["models/lgbm_20260628_050000.txt"]
         sample = np.zeros((1, 7))
-        assert incumbent.predict(sample).shape == (1,)
+        assert np.asarray(incumbent.predict(sample)).shape == (1,)
 
     def test_upload_then_download_round_trips_predictions(self) -> None:
         db = FakeSupabaseDB()

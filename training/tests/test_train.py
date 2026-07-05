@@ -18,21 +18,24 @@ repeats every 96 slots), deliberately chosen so:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
 import lightgbm
-import numpy as np
 import pytest
 
 from gotparking_training.config import FAIL_REASON_MODEL_UPLOAD_FAILED
-from gotparking_training.data_loading import load_carpark_history
 from gotparking_training.gate import PHASE_FIRST_PROMOTION, PHASE_RETRAIN
-from gotparking_training.repository import load_active_carparks
+from gotparking_training.series import TrainingRow
 from gotparking_training.sg_time import sgt_parts
-from gotparking_training.sinpa import SinpaUnavailableError
-from gotparking_training.supabase_rest import SupabaseUnavailableError
+from gotparking_training.sinpa import SinpaCarparkMapping, SinpaUnavailableError
 from gotparking_training.train import RunResult, TrainDeps, TrainingJobError, main, run
 from tests.fakes import FakeSupabaseDB, RecordingFailPing, make_clock
+
+#: Shape of a synthetic `carpark_history` row dict (see
+#: _slot_dependent_history_rows): carpark_id/polled_at are str, available_lots
+#: is float.
+HistoryRow = dict[str, str | float]
 
 _GOOD_PARAMS = {
     "objective": "regression",
@@ -62,11 +65,11 @@ _AMPLITUDE = 10.0
 
 def _slot_dependent_history_rows(
     carpark_id: str, start: datetime, n_ticks: int, step_minutes: int = 5,
-) -> list[dict[str, object]]:
+) -> list[HistoryRow]:
     """Synthetic `carpark_history` rows: available_lots = BASE + AMPLITUDE *
     slot_of_day(polled_at) -- see module docstring for the rationale.
     """
-    rows = []
+    rows: list[HistoryRow] = []
     for i in range(n_ticks):
         at = start + timedelta(minutes=step_minutes * i)
         _, slot = sgt_parts(at)
@@ -81,7 +84,7 @@ def _slot_dependent_history_rows(
 
 
 def _base_db(
-    history_rows: list[dict[str, object]], carpark_id: str = "1", sinpa_index: int | None = None,
+    history_rows: list[HistoryRow], carpark_id: str = "1", sinpa_index: int | None = None,
 ) -> FakeSupabaseDB:
     return FakeSupabaseDB(
         tables={
@@ -96,18 +99,17 @@ def _base_db(
 
 
 def _train_a_booster(
-    history_rows: list[dict[str, object]], params: dict[str, object], num_boost_round: int,
+    history_rows: list[HistoryRow], params: dict[str, object], num_boost_round: int,
 ) -> lightgbm.Booster:
     """Train a standalone booster on the same kind of data, for seeding an
     incumbent artifact directly (bypassing the full pipeline).
     """
-    from gotparking_training.data_loading import compute_history_stats
     from gotparking_training.series import TimedSample, build_rows_from_series
     from gotparking_training.modeling import train_candidate
 
     series = [
         TimedSample(
-            datetime.fromisoformat(row["polled_at"]), float(row["available_lots"])
+            datetime.fromisoformat(str(row["polled_at"])), float(row["available_lots"])
         )
         for row in history_rows
     ]
@@ -130,7 +132,7 @@ def _make_deps(db: FakeSupabaseDB, now: datetime, **overrides: object) -> TrainD
 
 
 @pytest.fixture
-def five_day_history() -> tuple[datetime, list[dict[str, object]]]:
+def five_day_history() -> tuple[datetime, list[HistoryRow]]:
     start = datetime(2026, 6, 1, tzinfo=timezone.utc)
     n_ticks = 5 * 24 * 60 // 5  # 5 days at 5-min spacing
     rows = _slot_dependent_history_rows("1", start, n_ticks)
@@ -143,7 +145,7 @@ class TestLoadHappyPathAndColdStartWiring:
     already lives in test_data_loading.py/test_cold_start.py)."""
 
     def test_run_loads_history_and_carparks_via_repository(
-        self, five_day_history: tuple[datetime, list[dict[str, object]]]
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
     ) -> None:
         now, rows = five_day_history
         db = _base_db(rows)
@@ -161,7 +163,7 @@ class TestBeatsBothComparatorsPromotes:
     comparators -> promotes, phase 1)."""
 
     def test_promotes_in_first_promotion_phase(
-        self, five_day_history: tuple[datetime, list[dict[str, object]]]
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
     ) -> None:
         now, rows = five_day_history
         db = _base_db(rows)
@@ -172,6 +174,8 @@ class TestBeatsBothComparatorsPromotes:
         assert result.phase == PHASE_FIRST_PROMOTION
         assert result.promoted is True
         assert result.mae_candidate is not None
+        assert result.mae_baseline is not None
+        assert result.mae_persistence is not None
         assert result.mae_candidate <= 0.9 * result.mae_baseline
         assert result.mae_candidate <= 0.9 * result.mae_persistence
         # Artifact uploaded and model_config flipped to the same version.
@@ -194,7 +198,7 @@ class TestFailsEitherComparatorDoesNotPromote:
     """
 
     def test_crippled_candidate_does_not_promote(
-        self, five_day_history: tuple[datetime, list[dict[str, object]]]
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
     ) -> None:
         now, rows = five_day_history
         db = _base_db(rows)
@@ -216,7 +220,7 @@ class TestComparatorNeverReadsLiveBaselineTable:
     a poisoned live carpark_baseline table must never be queried."""
 
     def test_carpark_baseline_table_is_never_selected(
-        self, five_day_history: tuple[datetime, list[dict[str, object]]]
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
     ) -> None:
         now, rows = five_day_history
         db = _base_db(rows)
@@ -243,7 +247,7 @@ class TestPhaseTwoRetrainWiring:
     correct artifact path)."""
 
     def test_clearly_better_candidate_promotes_in_retrain_phase(
-        self, five_day_history: tuple[datetime, list[dict[str, object]]]
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
     ) -> None:
         now, rows = five_day_history
         incumbent_booster = _train_a_booster(rows, _CRIPPLED_PARAMS, _CRIPPLED_ROUNDS)
@@ -260,12 +264,13 @@ class TestPhaseTwoRetrainWiring:
 
         assert result.phase == PHASE_RETRAIN
         assert result.mae_incumbent is not None
+        assert result.mae_candidate is not None
         assert db.download_calls == ["models/lgbm_20260525_050000.txt"]
         assert result.promoted is True
         assert result.mae_candidate <= 1.02 * result.mae_incumbent
 
     def test_clearly_worse_candidate_is_rejected_in_retrain_phase(
-        self, five_day_history: tuple[datetime, list[dict[str, object]]]
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
     ) -> None:
         now, rows = five_day_history
         incumbent_booster = _train_a_booster(rows, _GOOD_PARAMS, _GOOD_ROUNDS)
@@ -284,6 +289,8 @@ class TestPhaseTwoRetrainWiring:
 
         assert result.phase == PHASE_RETRAIN
         assert result.promoted is False
+        assert result.mae_candidate is not None
+        assert result.mae_incumbent is not None
         assert result.mae_candidate > 1.02 * result.mae_incumbent
         assert db.updated == []
         assert db.upload_calls == []
@@ -294,7 +301,7 @@ class TestEmptyHoldoutCarparkExcluded:
     excluded from that cycle's MAE calc, no crash."""
 
     def test_carpark_with_no_holdout_rows_does_not_crash_and_is_excluded(
-        self, five_day_history: tuple[datetime, list[dict[str, object]]]
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
     ) -> None:
         now, rows_1 = five_day_history
         # Carpark 2's history stops 2 full days before `now` -- entirely
@@ -329,7 +336,7 @@ class TestStorageUploadFailure:
     then /fail ping, abort promotion (never a silent skip)."""
 
     def test_upload_failure_pings_fail_and_raises_training_job_error(
-        self, five_day_history: tuple[datetime, list[dict[str, object]]]
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
     ) -> None:
         now, rows = five_day_history
         db = _base_db(rows)
@@ -352,12 +359,14 @@ class TestSinpaIntegration:
     """Test Requirements cases 17-18 at the pipeline level."""
 
     def test_sinpa_available_sets_used_sinpa_true(
-        self, five_day_history: tuple[datetime, list[dict[str, object]]]
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
     ) -> None:
         now, rows = five_day_history
         db = _base_db(rows, sinpa_index=1584)
 
-        def fake_load_sinpa(mappings: object) -> dict[str, list[object]]:
+        def fake_load_sinpa(
+            mappings: Sequence[SinpaCarparkMapping],
+        ) -> dict[str, list[TrainingRow]]:
             from gotparking_training.series import TimedSample, build_rows_from_series
 
             start = datetime(2020, 7, 1, tzinfo=timezone.utc)
@@ -375,12 +384,14 @@ class TestSinpaIntegration:
         assert db.inserted["training_runs"][0]["used_sinpa"] is True
 
     def test_sinpa_failure_falls_back_to_live_only_without_crashing(
-        self, five_day_history: tuple[datetime, list[dict[str, object]]]
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
     ) -> None:
         now, rows = five_day_history
         db = _base_db(rows, sinpa_index=1584)
 
-        def failing_load_sinpa(mappings: object) -> dict[str, list[object]]:
+        def failing_load_sinpa(
+            mappings: Sequence[SinpaCarparkMapping],
+        ) -> dict[str, list[TrainingRow]]:
             raise SinpaUnavailableError("HuggingFace unreachable")
 
         deps = _make_deps(db, now, load_sinpa=failing_load_sinpa)
@@ -392,7 +403,7 @@ class TestSinpaIntegration:
         assert db.inserted["training_runs"][0]["used_sinpa"] is False
 
     def test_no_sinpa_mapped_carparks_trains_live_only(
-        self, five_day_history: tuple[datetime, list[dict[str, object]]]
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
     ) -> None:
         now, rows = five_day_history
         db = _base_db(rows, sinpa_index=None)
@@ -466,8 +477,10 @@ class TestMainEntryPoint:
         assert exit_code == 1
         assert pings["success"] == []
         assert len(pings["fail"]) == 1
-        assert "TRAINING_CRASH" in pings["fail"][0]
-        assert "unexpected bug" in pings["fail"][0]
+        fail_reason = pings["fail"][0]
+        assert isinstance(fail_reason, str)
+        assert "TRAINING_CRASH" in fail_reason
+        assert "unexpected bug" in fail_reason
 
     def test_training_job_error_returns_1_without_a_second_ping(
         self, monkeypatch: pytest.MonkeyPatch
@@ -508,7 +521,8 @@ class TestMainEntryPoint:
         before a Settings object exists, so main() must read the ping URL
         independently from the environment rather than only from settings.
         """
-        pings: dict[str, list[object]] = {"success": [], "fail": []}
+        success_calls: list[str | None] = []
+        fail_calls: list[tuple[str | None, str]] = []
         monkeypatch.setenv("HEALTHCHECKS_TRAINING_PING_URL", "https://hc-ping.com/abc")
 
         def raise_missing_env() -> object:
@@ -516,19 +530,19 @@ class TestMainEntryPoint:
 
         monkeypatch.setattr("gotparking_training.train.load_settings", raise_missing_env)
         monkeypatch.setattr(
-            "gotparking_training.train.ping_success", lambda url: pings["success"].append(url)
+            "gotparking_training.train.ping_success", lambda url: success_calls.append(url)
         )
         monkeypatch.setattr(
             "gotparking_training.train.ping_fail",
-            lambda url, reason: pings["fail"].append((url, reason)),
+            lambda url, reason: fail_calls.append((url, reason)),
         )
 
         exit_code = main()
 
         assert exit_code == 1
-        assert pings["success"] == []
-        assert len(pings["fail"]) == 1
-        url, reason = pings["fail"][0]
+        assert success_calls == []
+        assert len(fail_calls) == 1
+        url, reason = fail_calls[0]
         assert url == "https://hc-ping.com/abc"
         assert "SUPABASE_URL" in reason
 

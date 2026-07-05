@@ -33,5 +33,10 @@ line-length = 100
 target-version = "py311"
 
 [tool.mypy]
-python_version = "3.11"
+# Matches .python-version (3.12), the interpreter this project actually runs
+# under (both in CI and locally) -- pinning to the 3.11 floor from
+# requires-python instead would make mypy parse installed dependencies'
+# bundled type stubs (e.g. numpy's) assuming an older Python than what's
+# really executing, which can reject syntax those stubs use.
+python_version = "3.12"
 ignore_missing_imports = true
