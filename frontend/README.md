@@ -2,10 +2,11 @@
 
 Mobile-first PWA (T6 in the design doc), deployed on the same Vercel project as `api/`.
 
-Destination search/picker (always user-driven, no auto-guessed "usual carpark") with
-top 2-3 most-picked locations surfacing as one-tap shortcuts, stored in localStorage only
-(no backend accounts). Degrades gracefully if localStorage is unavailable (private
-browsing) - flagged as a critical gap in the design doc's Failure Modes.
+Destination search/picker (always user-driven, no auto-guessed "usual carpark") with the
+top 3 most-picked locations (`MAX_SHORTCUTS_SHOWN` in `src/lib/shortcuts.ts`) surfacing as
+one-tap shortcuts, stored in localStorage only (no backend accounts). Degrades gracefully
+if localStorage is unavailable (private browsing) - flagged as a critical gap in the design
+doc's Failure Modes.
 
 Design doc: `~/.gstack/projects/gstack-playground/kenzy-unknown-design-20260702-210951.md`
 
@@ -71,17 +72,15 @@ docstring directly, so no frontend changes should be needed once Lane D's endpoi
 and wired up for real; a short manual smoke test against the real deployment is still
 worth doing once both lanes are merged (see Known gaps below).
 
-## Vercel build settings (for the orchestrator's root vercel.json merge)
+## Vercel build settings
 
-This lane does NOT edit the root `vercel.json` (owned by the api lane, currently
-`{"regions": ["sin1"]}`). The orchestrator should merge in:
-
-```json
-{
-  "buildCommand": "cd frontend && npm ci && npm run build",
-  "outputDirectory": "frontend/dist"
-}
-```
+**Superseded 2026-07-06** by the `services` model migration (see root `CLAUDE.md`'s Deploy
+Configuration section and `README.md` for the full story) -- this section originally
+described a flat `{"regions": ["sin1"]}` root `vercel.json` this lane would merge a
+`buildCommand`/`outputDirectory` into. The current root `vercel.json` instead declares a
+`frontend` service (`services.frontend = {"root": "frontend/"}`), with the build command and
+output directory resolved automatically by Vercel's framework detection for that service --
+there is nothing for this lane to merge into the root config anymore.
 
 ## Seed carpark whitelist
 

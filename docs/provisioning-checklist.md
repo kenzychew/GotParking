@@ -340,9 +340,8 @@ doc D7 / Premise #9 as amended).
       Python functions carry `X-Vercel-Id: sin1::...`, confirming the pin
       empirically.
 
-Note: environment variables are wired in Phase 6c (still pending -- until
-then `/api/forecast` serves its typed 503 and `/api/batch_predict` its typed
-JSON 500).
+Note: environment variables were wired in Phase 6c on 2026-07-06 -- DONE, see
+below (this note was written before that happened and was left stale).
 
 ## Phase 6: Secrets wiring
 
@@ -401,29 +400,39 @@ log).
       `https://gstack-playground.vercel.app/api/batch_predict` (Phase 5
       done), wired via `wrangler secret put BATCH_PREDICT_URL`.
 
-### Phase 6b: GitHub Actions repository secrets (3) -- still open
+### Phase 6b: GitHub Actions repository secrets (3) -- DONE 2026-07-06
+
+-- Corrected 2026-07-06 (found stale by /document-release's doc review): this
+section's own checkboxes were never updated when this work was actually
+done; Phase 7 and the Hand-off list below were updated but this source
+section was missed. Fixed now to match.
 
 Path: `github.com/<your-username>/gotparking` > `Settings` >
-`Secrets and variables` > `Actions` > `New repository secret`.
+`Secrets and variables` > `Actions` > `New repository secret`. Done via
+`gh secret set <NAME> --repo kenzychew/GotParking` (reads from stdin) in
+practice, not the dashboard.
 
-- [ ] `SUPABASE_URL` = the recorded value
-- [ ] `SUPABASE_SERVICE_ROLE_KEY` = the recorded value
-- [ ] `HEALTHCHECKS_TRAINING_PING_URL` = the recorded value -- the VALUE is
-      known and saved in `.env` (Phase 3 done, 2026-07-06); only the
-      wiring-into-GitHub step itself remains. The training check is
-      currently PAUSED on healthchecks.io until this is wired and the first
-      real weekly ping arrives.
+- [x] `SUPABASE_URL` = the recorded value -- DONE, confirmed via `gh secret list`.
+- [x] `SUPABASE_SERVICE_ROLE_KEY` = the recorded value -- DONE, confirmed via `gh secret list`.
+- [x] `HEALTHCHECKS_TRAINING_PING_URL` = the recorded value -- DONE. The
+      training check is still PAUSED on healthchecks.io (by design) until
+      `.github/workflows/train.yml` fires on its own schedule and sends the
+      first real ping.
 
-### Phase 6c: Vercel environment variables (3)
+### Phase 6c: Vercel environment variables (3) -- DONE 2026-07-06
 
-Path: project `gotparking` > `Settings` > `Environment Variables` > `Add`.
-Apply each to all environments (Production, Preview, Development); mark
-`SUPABASE_SERVICE_ROLE_KEY` and `BATCH_SHARED_SECRET` as Sensitive if the
-toggle is offered.
+Path: project `gstack-playground` > `Settings` > `Environment Variables` >
+`Add`. Done via `vercel env add <NAME> <environment>` (once per environment
+-- omitting the environment only works in interactive mode) in practice, not
+the dashboard. Applied to all 3 environments (Production, Preview,
+Development); `SUPABASE_SERVICE_ROLE_KEY` and `BATCH_SHARED_SECRET` are
+Sensitive on Production/Preview -- Vercel does not allow Sensitive on
+Development at all (confirmed live, not a gap here), so those two are
+Non-sensitive there, which is also what makes `vercel env pull` work locally.
 
-- [ ] `SUPABASE_URL` = the recorded value
-- [ ] `SUPABASE_SERVICE_ROLE_KEY` = the recorded value
-- [ ] `BATCH_SHARED_SECRET` = the value from your local `.env`
+- [x] `SUPABASE_URL` = the recorded value -- DONE, confirmed via `vercel env ls`.
+- [x] `SUPABASE_SERVICE_ROLE_KEY` = the recorded value -- DONE, confirmed via `vercel env ls`.
+- [x] `BATCH_SHARED_SECRET` = the value from your local `.env` -- DONE, confirmed via `vercel env ls`.
 
 Note: Vercel env vars take effect from the NEXT deployment -- no redeploy is
 needed today; T4's first real deploy will pick them up.

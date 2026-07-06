@@ -2,6 +2,27 @@
 
 ## Infrastructure
 
+### Add a regression test for the 4th training early-exit path
+
+**What:** `training/src/gotparking_training/train.py`'s `run()` has 4 early-exit paths that
+each call `_skip_result` to record a `training_runs` audit row: no eligible carparks, no
+labeled rows survive the join tolerance, no pre-holdout rows, and "empty holdout window
+across all carparks" (~line 284). `training/tests/test_train.py`'s
+`TestSkippedCyclesAlwaysRecordAnAuditRow` class only covers the first 3.
+
+**Why:** Found by `/document-release`'s doc review (2026-07-06) auditing README.md's claim
+of "three early-exit cycles... with regression tests" against the actual code -- the count
+was off by one, and fixing the doc's wording surfaced that the 4th path's test genuinely
+doesn't exist yet, not just that it wasn't mentioned.
+
+**Context:** Same category of bug as the one fixed directly earlier in this project (all 4
+early-exit paths DO correctly insert the audit row today -- this is purely a missing-test
+gap, not a missing-behavior gap).
+
+**Effort:** S (~15 min, following the pattern of the other 3 tests in the same class)
+**Priority:** P3
+**Depends on:** None
+
 ### Explicitly disable Preview URLs on the poller Worker
 
 **What:** Add `preview_urls = false` to `poller/wrangler.toml` (top level, alongside the
@@ -20,34 +41,42 @@ across other Workers.
 **Priority:** P4
 **Depends on:** None
 
-### Add a dedicated healthchecks.io check for batch-predict failures
+### Batch-predict failures currently alert nobody (not just imprecisely — silently)
 
 **What:** Provision a third healthchecks.io check (e.g. `gotparking-batch-predict`, ~10 min
 expected period matching the poll cycle) and wire a dedicated
-`HEALTHCHECKS_BATCH_PING_URL` into `api/_lib/config.py` / `healthchecks.py`, replacing the
-current reuse of `HEALTHCHECKS_TRAINING_PING_URL` for batch predict's `/fail` pings.
+`HEALTHCHECKS_BATCH_PING_URL` into `api/_lib/config.py` / `healthchecks.py`. At minimum,
+wire the existing `HEALTHCHECKS_TRAINING_PING_URL` value to Vercel as a stopgap — right now
+it isn't wired there at all (see Context).
 
 **Why:** T4 (Lane D) was wired only the training job's ping URL, but the design doc's batch
 predict spec (T4, Failure Modes registry) requires a `/fail` ping on model-artifact failure
-AND on Supabase read/write failure. The agent correctly flagged this as a scope gap and used
-the training URL as a stopgap, tagging pings with a `reason` field to disambiguate. The real
-problem: the training check has a weekly expected period + 24h grace (Premise #8/T1.5). A
-single batch-predict failure pings that check's `/fail` endpoint, which then shows "down"
-and alerts — and stays down until the NEXT weekly training success ping clears it (batch
-predict never pings success on this URL), i.e. up to a week of a misleading "training is
-down" alert state for what might have been one transient batch hiccup.
+AND on Supabase read/write failure. The agent correctly flagged this as a scope gap and
+intended the training URL as a stopgap, tagging pings with a `reason` field to disambiguate.
 
-**Context:** This is an alerting-precision gap, not a functional bug — the actual
+**Corrected 2026-07-06 (found by /document-release's doc review):** this was previously
+described here as "imprecise reuse of the training check" — that's no longer accurate.
+`api/_lib/config.py:90` reads `HEALTHCHECKS_TRAINING_PING_URL` from the environment, and
+Vercel's actual wired env vars (`docs/provisioning-checklist.md` Phase 6c) are only
+`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `BATCH_SHARED_SECRET` — that ping URL was never
+wired to Vercel at all. `healthchecks.py::fire_fail_ping` does exactly what its own docstring
+promises (best-effort, skips silently and logs when the URL is unset) — so batch-predict
+`/fail` pings are currently a guaranteed no-op in production, not a misdirected alert. The
+"stays down for up to a week" scenario this entry used to describe can't happen today because
+no ping fires at all.
+
+**Context:** This is still an alerting gap, not a functional bug — the actual
 fallback-to-baseline behavior on artifact/Supabase failure is correct and tested
-(`api/tests/test_batch_predict.py`). Fix is contained: one more healthchecks.io check
-(manual, ~2 min) plus a new env var threaded through `config.py`/`healthchecks.py` and the
-three platforms' secret stores (Cloudflare doesn't need it; Vercel does). See
-`docs/provisioning-checklist.md` Phase 3 for the pattern used for the existing two checks.
+(`api/tests/test_batch_predict.py`). Fix is contained: wire
+`HEALTHCHECKS_TRAINING_PING_URL` to Vercel now (cheap, restores the originally-intended
+imprecise-but-present alerting immediately) and/or provision the dedicated check later for
+precision. See `docs/provisioning-checklist.md` Phase 3 for the pattern used for the
+existing two checks.
 
-**Effort:** S (~15 min: one dashboard check + a few lines of code + one secret to wire)
-**Priority:** P2
-**Depends on:** None — can be done any time before the batch-predict endpoint sees real
-production failures.
+**Effort:** S (~2 min for the stopgap wiring; ~15 min for the full dedicated-check fix)
+**Priority:** P1 (raised from P2 — this is a live gap in production alerting, not a future
+precision nice-to-have)
+**Depends on:** None — the stopgap can be done immediately.
 
 ### Revisit connection-pool/thundering-herd behavior under real traffic
 

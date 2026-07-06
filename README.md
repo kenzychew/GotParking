@@ -43,15 +43,19 @@ deploy blocker, below).
 green. T4 (api): `api/`, 113/113 tests green, ruff + mypy clean. T6 (frontend): `frontend/`,
 70/70 tests green, production build clean (installable PWA, offline cache, Public Sans
 self-hosted). T5 (training): `training/`, 161/161 tests green, ruff + mypy clean —
-SGT/holiday logic is cross-checked against `api/`'s copy in CI so the two can never silently
-drift. Test Requirements coverage: **49/49 planned paths (100%)** — see the design doc.
+SGT/holiday logic is cross-checked against `api/`'s copy by a dedicated test
+(`training/tests/test_sg_time.py` loads `api/_lib/sg_time.py` directly and diffs both across
+a dense grid of instants), run manually via `uv run pytest` — `.github/workflows/train.yml`
+only runs the production training job itself, it does not run any lane's test suite. Test
+Requirements coverage: **49/49 planned paths (100%)** — see the design doc.
 
 Every lane was independently re-verified (tests re-run from a fresh `main` checkout, not
 just the build worktree) before merging. Two real gaps were found this way and handled
-openly rather than swept aside: batch predict's failure alerting currently reuses the
-training job's healthchecks check (imprecise but not a functional bug — tracked in
-TODOS.md); and a training bug where three early-exit cycles skipped without recording a
-`training_runs` audit row was found and fixed directly, with regression tests, before merge.
+openly rather than swept aside: batch predict's failure alerting currently has no ping URL
+wired in production at all (not just an imprecise one — see TODOS.md, corrected 2026-07-06);
+and a training bug where early-exit cycles skipped without recording a `training_runs`
+audit row was found and fixed directly, with regression tests covering 3 of the 4 early-exit
+paths, before merge.
 
 **Vercel deploy: fixed 2026-07-05.** The "No python entrypoint found in default locations"
 error was NOT caused by the repo's file layout — the linked Vercel project had Framework
