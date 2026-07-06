@@ -51,11 +51,12 @@ Requirements coverage: **49/49 planned paths (100%)** — see the design doc.
 
 Every lane was independently re-verified (tests re-run from a fresh `main` checkout, not
 just the build worktree) before merging. Two real gaps were found this way and handled
-openly rather than swept aside: batch predict's failure alerting currently has no ping URL
-wired in production at all (not just an imprecise one — see TODOS.md, corrected 2026-07-06);
-and a training bug where early-exit cycles skipped without recording a `training_runs`
-audit row was found and fixed directly, with regression tests covering 3 of the 4 early-exit
-paths, before merge.
+openly rather than swept aside: batch predict's failure alerting had no ping URL wired in
+production at all (found 2026-07-06; fixed same day — `HEALTHCHECKS_TRAINING_PING_URL` wired
+to Vercel and live-verified end-to-end via a real forced-failure drill, see TODOS.md); and a
+training bug where early-exit cycles skipped without recording a `training_runs` audit row
+was found and fixed directly, with regression tests covering 3 of the 4 early-exit paths,
+before merge.
 
 **Vercel deploy: fixed 2026-07-05.** The "No python entrypoint found in default locations"
 error was NOT caused by the repo's file layout — the linked Vercel project had Framework

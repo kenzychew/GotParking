@@ -41,42 +41,41 @@ across other Workers.
 **Priority:** P4
 **Depends on:** None
 
-### Batch-predict failures currently alert nobody (not just imprecisely — silently)
+### Batch-predict alerting reuses the training check (imprecise, but now present)
 
-**What:** Provision a third healthchecks.io check (e.g. `gotparking-batch-predict`, ~10 min
-expected period matching the poll cycle) and wire a dedicated
-`HEALTHCHECKS_BATCH_PING_URL` into `api/_lib/config.py` / `healthchecks.py`. At minimum,
-wire the existing `HEALTHCHECKS_TRAINING_PING_URL` value to Vercel as a stopgap — right now
-it isn't wired there at all (see Context).
+**What:** Provision a dedicated healthchecks.io check (e.g. `gotparking-batch-predict`, ~10
+min expected period matching the poll cycle) and wire a separate `HEALTHCHECKS_BATCH_PING_URL`
+into `api/_lib/config.py` / `healthchecks.py`, so batch-predict failures stop sharing the
+training job's check.
 
 **Why:** T4 (Lane D) was wired only the training job's ping URL, but the design doc's batch
 predict spec (T4, Failure Modes registry) requires a `/fail` ping on model-artifact failure
 AND on Supabase read/write failure. The agent correctly flagged this as a scope gap and
 intended the training URL as a stopgap, tagging pings with a `reason` field to disambiguate.
 
-**Corrected 2026-07-06 (found by /document-release's doc review):** this was previously
-described here as "imprecise reuse of the training check" — that's no longer accurate.
-`api/_lib/config.py:90` reads `HEALTHCHECKS_TRAINING_PING_URL` from the environment, and
-Vercel's actual wired env vars (`docs/provisioning-checklist.md` Phase 6c) are only
-`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `BATCH_SHARED_SECRET` — that ping URL was never
-wired to Vercel at all. `healthchecks.py::fire_fail_ping` does exactly what its own docstring
-promises (best-effort, skips silently and logs when the URL is unset) — so batch-predict
-`/fail` pings are currently a guaranteed no-op in production, not a misdirected alert. The
-"stays down for up to a week" scenario this entry used to describe can't happen today because
-no ping fires at all.
+**Status 2026-07-06:** the stopgap is now DONE and live-verified. Until today,
+`HEALTHCHECKS_TRAINING_PING_URL` had never actually been wired to Vercel (only to GitHub
+Actions, for the training job itself), so `healthchecks.py::fire_fail_ping`'s own
+best-effort/skip-when-unset behavior meant batch-predict `/fail` pings were a guaranteed
+no-op in production -- not just imprecise, genuinely silent. Fixed: wired
+`HEALTHCHECKS_TRAINING_PING_URL` to all 3 Vercel environments and redeployed. Verified
+end-to-end for real (not just by reading the code): called the actual unmodified
+`fire_fail_ping` against the real URL, confirmed via the healthchecks.io API that
+`gotparking-training` flipped to `status=down` with a matching timestamp, then sent a real
+success ping to clear it and re-paused the check (the training job itself still hasn't run
+for real yet, so leaving it active on the strength of one drill ping would risk a false
+alarm before its first real weekly run). The remaining gap is now back to its original,
+smaller shape: batch-predict failures alert correctly, just to the shared training check
+(imprecise "training is down" framing) rather than a dedicated one.
 
-**Context:** This is still an alerting gap, not a functional bug — the actual
-fallback-to-baseline behavior on artifact/Supabase failure is correct and tested
-(`api/tests/test_batch_predict.py`). Fix is contained: wire
-`HEALTHCHECKS_TRAINING_PING_URL` to Vercel now (cheap, restores the originally-intended
-imprecise-but-present alerting immediately) and/or provision the dedicated check later for
-precision. See `docs/provisioning-checklist.md` Phase 3 for the pattern used for the
-existing two checks.
+**Context:** Not a functional bug — the actual fallback-to-baseline behavior on
+artifact/Supabase failure is correct and tested (`api/tests/test_batch_predict.py`). This
+remaining item is purely about alert precision now. See `docs/provisioning-checklist.md`
+Phase 3 for the pattern used for the existing two checks.
 
-**Effort:** S (~2 min for the stopgap wiring; ~15 min for the full dedicated-check fix)
-**Priority:** P1 (raised from P2 — this is a live gap in production alerting, not a future
-precision nice-to-have)
-**Depends on:** None — the stopgap can be done immediately.
+**Effort:** S (~15 min: one dashboard check + a few lines of code + one secret to wire)
+**Priority:** P2 (lowered from P1 now that the silent-no-op gap is closed)
+**Depends on:** None
 
 ### Revisit connection-pool/thundering-herd behavior under real traffic
 

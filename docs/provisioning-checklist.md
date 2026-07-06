@@ -354,7 +354,7 @@ The full matrix -- exact names, one row per secret/value:
 | `SUPABASE_SERVICE_ROLE_KEY`      | x                         | x                           | x               |
 | `BATCH_SHARED_SECRET`            | x                         |                             | x               |
 | `HEALTHCHECKS_POLLER_PING_URL`   | x                         |                             |                 |
-| `HEALTHCHECKS_TRAINING_PING_URL` |                           | x                           |                 |
+| `HEALTHCHECKS_TRAINING_PING_URL` |                           | x                           | x               |
 | `BATCH_PREDICT_URL`              | x (later)                 |                             |                 |
 
 When each value exists:
@@ -419,7 +419,7 @@ practice, not the dashboard.
       `.github/workflows/train.yml` fires on its own schedule and sends the
       first real ping.
 
-### Phase 6c: Vercel environment variables (3) -- DONE 2026-07-06
+### Phase 6c: Vercel environment variables (4) -- DONE 2026-07-06
 
 Path: project `gstack-playground` > `Settings` > `Environment Variables` >
 `Add`. Done via `vercel env add <NAME> <environment>` (once per environment
@@ -433,9 +433,17 @@ Non-sensitive there, which is also what makes `vercel env pull` work locally.
 - [x] `SUPABASE_URL` = the recorded value -- DONE, confirmed via `vercel env ls`.
 - [x] `SUPABASE_SERVICE_ROLE_KEY` = the recorded value -- DONE, confirmed via `vercel env ls`.
 - [x] `BATCH_SHARED_SECRET` = the value from your local `.env` -- DONE, confirmed via `vercel env ls`.
+- [x] `HEALTHCHECKS_TRAINING_PING_URL` = the recorded value -- DONE 2026-07-06
+      (added after the rest of this phase; batch-predict's `/fail` ping was
+      found to be a silent no-op in production without it -- see TODOS.md).
+      Sensitive on Production/Preview, Non-sensitive on Development (same
+      reasoning as the other two secrets above).
 
-Note: Vercel env vars take effect from the NEXT deployment -- no redeploy is
-needed today; T4's first real deploy will pick them up.
+Note: Vercel env vars take effect from the NEXT deployment. `HEALTHCHECKS_TRAINING_PING_URL`
+required an explicit `npx vercel --prod` redeploy after adding it (2026-07-06) --
+confirmed live via a real forced-failure drill: called the actual `fire_fail_ping`
+against the real URL, watched `gotparking-training` flip to `status=down` via the
+healthchecks.io API, then cleared it with a real success ping and re-paused the check.
 
 ## Phase 7: Verification (T1.5 exit criteria)
 
@@ -543,12 +551,14 @@ Platform state at hand-off (2026-07-06, T1.5 fully complete): GitHub repo
 `GotParking` pushed, all four lanes (T2-T6) merged to `main`; Supabase
 project `gotparking` live in `ap-southeast-1`, schema applied and verified;
 healthchecks.io checks `gotparking-poller` (ACTIVE, `up`, receiving real
-pings every 5 minutes) and `gotparking-training` (PAUSED) both created and
+pings every 5 minutes) and `gotparking-training` (PAUSED, live-verified
+2026-07-06 via a real forced-failure drill -- see TODOS.md) both created and
 tested; Cloudflare Worker `gotparking-poller` running the real T3 poller
 code live, cron `*/5 * * * *` confirmed, all 6 secrets wired; Vercel project
 `gstack-playground` live at `https://gstack-playground.vercel.app` via the
-`services` model, `sin1` pinned, all 3 env vars set across all 3
-environments; GitHub Actions has all 3 of its repository secrets set. Every
+`services` model, `sin1` pinned, all 4 env vars set across all 3
+environments (3 from Phase 6c plus `HEALTHCHECKS_TRAINING_PING_URL`, added
+2026-07-06); GitHub Actions has all 3 of its repository secrets set. Every
 platform, every secret, every value from this checklist is now wired
 somewhere -- nothing is deferred anymore. The one thing left is time, not a
 task: `gotparking-training`'s healthchecks check stays Paused (by design)
