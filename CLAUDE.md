@@ -69,7 +69,7 @@ here so they aren't silently dropped, but are NOT automated by /land-and-deploy.
   `(cd poller && npx vitest run)`, `(cd api && uv run pytest -q)`,
   `(cd training && uv run pytest -q)`, `(cd frontend && npx vitest run)`
 - Deploy trigger: automatic on push to `main` (Vercel only)
-- Deploy status: poll the production URL once set; no CLI wired yet
+- Deploy status: `npx vercel ls` (see Deploy status command above)
 - Health check: `GET {production-url}/api/forecast` (see above)
 
 ### Other deploy surfaces (NOT managed by /land-and-deploy)

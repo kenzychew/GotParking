@@ -94,10 +94,13 @@ matches a directory named `data` at any depth, which would otherwise silently ex
 
 ## Known gaps / deviations
 
-- No live backend was available while building this lane; the contract match is verified
-  by reading `api/_lib/read_logic.py`'s docstring directly, not by an actual round-trip
-  against Lane D's deployed endpoint. Worth a short integration smoke test once both lanes
-  are deployed together.
+- No live backend was available while building this lane; the contract match was originally
+  verified by reading `api/_lib/read_logic.py`'s docstring directly, not by an actual
+  round-trip against Lane D's deployed endpoint. **Resolved 2026-07-06:** `/qa` ran a full
+  browser pass against the live deployment (`https://gstack-playground.vercel.app`) --
+  search, select, no-results state, dark mode, Share-to-clipboard, shortcuts, mobile
+  viewport -- health score 98/100, zero bugs, console clean throughout. See
+  `.gstack/qa-reports/qa-report-gstack-playground-vercel-app-2026-07-06.md`.
 - The "based on N weeks of history" transparency note from the design doc's Design Details
   section is implemented using `model_version`'s presence/absence as the trigger (per the
   design doc's own instruction), but phrased without a fabricated week count - the pinned

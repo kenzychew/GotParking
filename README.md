@@ -79,3 +79,11 @@ live only since 2026-07-05/06, so T5's training job (weekly, next fires on its o
 hasn't had ~2-3 weeks of history to train against yet — exactly the bootstrap window the
 design doc's Approach A always expected. The post-deploy verification checklist in the
 design doc's Observability section is the next thing worth running once that data exists.
+
+**QA: 2026-07-06, health score 98/100, zero bugs.** A full `/qa` browser pass against the
+live production site — search, carpark selection, no-results state, dark mode, Share, the
+shortcuts quick-access chip, mobile viewport — everything worked correctly, console clean
+throughout. Full report: `.gstack/qa-reports/qa-report-gstack-playground-vercel-app-2026-07-06.md`.
+
+See also: `CHANGELOG.md` for release history, `TODOS.md` for tracked follow-ups (all
+low/medium priority, none blocking).
