@@ -31,6 +31,10 @@ no login needed, works offline as an installable PWA.
 - Diagnosed and fixed a two-stage Vercel deploy blocker (an auto-detected `framework:
   python` preset forcing single-entrypoint mode, then a 225MB Python bundle cap) via a
   migration to Vercel's `services` model.
+- Fixed batch-predict's failure alerting: `HEALTHCHECKS_TRAINING_PING_URL` was never wired
+  to Vercel, so `/fail` pings were a guaranteed no-op in production. Wired it to all 3
+  environments and verified end-to-end via a real forced-failure drill against the live
+  healthchecks.io check.
 
 ## v0.0.1.0 - 2026-07-04
 

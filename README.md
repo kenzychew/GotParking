@@ -29,9 +29,12 @@ verified live.
 **Provisioning (T1.5) is fully complete** — every phase, every platform, every secret. The
 poller is **live** at `https://gotparking-poller.kenzychew.workers.dev` (cron confirmed every
 5 minutes, all 6 secrets wired) and the site is **live** at
-`https://gstack-playground.vercel.app` (independently re-verified: `200` on `/`, a correct
-typed `503` on `/api/forecast`, `X-Vercel-Id: sin1::` confirming the region pin). Both
-healthchecks.io dead-man's-switch checks exist — `gotparking-poller` is already `up`
+`https://gstack-playground.vercel.app` (independently re-verified: `200` on `/`, and
+`/api/forecast` now also returns `200` — as of 2026-07-07 the poller/batch-predict pipeline
+has run long enough that `carpark_forecast` holds real rows for all 10 carparks, each still
+in the designed `cold_start` state (`forecast_lots: null`, real `live_lots` served) pending
+the cold-start threshold and the first weekly training run; `X-Vercel-Id: sin1::` continues to
+confirm the region pin). Both healthchecks.io dead-man's-switch checks exist — `gotparking-poller` is already `up`
 (receiving real pings); `gotparking-training` stays intentionally paused until
 `.github/workflows/train.yml` fires on its own weekly schedule and sends its first real ping.
 GitHub Actions and Vercel each have their full set of secrets/env vars wired. See
@@ -78,8 +81,10 @@ bundle it and the function runtime image lacks it (`/var/task/lib` is on the run
 library path). `regions: ["sin1"]` stays top-level and held: live responses show
 `X-Vercel-Id: sin1::`.
 
-**Nothing is deferred anymore.** The only thing left before the app shows real forecasts
-instead of its honest "predictions temporarily unavailable" 503 is data: the poller has been
+**Nothing is deferred anymore.** The app has moved past its initial "predictions temporarily
+unavailable" 503 — as of 2026-07-07, `/api/forecast` returns `200` for all 10 carparks in the
+designed `cold_start` state (real `live_lots`, `forecast_lots: null`) rather than an empty
+table. The only thing left before it shows real ML forecasts is data: the poller has been
 live only since 2026-07-05/06, so T5's training job (weekly, next fires on its own schedule)
 hasn't had ~2-3 weeks of history to train against yet — exactly the bootstrap window the
 design doc's Approach A always expected. The post-deploy verification checklist in the

@@ -494,10 +494,12 @@ acceptable proof.
       linked to the GitHub repo -- DONE 2026-07-05 (project is named
       `gstack-playground`, not `gotparking`; linked to
       `kenzychew/GotParking`, auto-deploys on push to `main`).
-- [x] Vercel: `Settings` > `Environment Variables` lists exactly these 3
+- [x] Vercel: `Settings` > `Environment Variables` lists exactly these 4
       names: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-      `BATCH_SHARED_SECRET` -- DONE 2026-07-06, confirmed via `vercel env
-      ls` (all 3 present across Production/Preview/Development -- 9 rows).
+      `BATCH_SHARED_SECRET`, `HEALTHCHECKS_TRAINING_PING_URL` -- DONE
+      2026-07-06 (4th added same day, see Phase 6c), confirmed via `vercel
+      env ls` (all 4 present across Production/Preview/Development -- 12
+      rows).
       `SUPABASE_SERVICE_ROLE_KEY`/`BATCH_SHARED_SECRET` are Sensitive on
       Production/Preview; Development doesn't support Sensitive vars at all
       (a real Vercel platform constraint, not a gap here) so those two are
