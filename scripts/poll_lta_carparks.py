@@ -68,16 +68,26 @@ def fetch_carpark_availability(api_key: str) -> list[dict[str, str | int]]:
     return payload.get("value", [])
 
 
-def append_samples(records: list[dict[str, str | int]], output_file: Path) -> int:
+def append_samples(
+    records: list[dict[str, str | int]],
+    output_file: Path,
+    candidate_ids: dict[str, str] | None = None,
+) -> int:
     """Append candidate-carpark samples from one poll to the CSV log.
 
     Args:
         records: Raw carpark records from the LTA API.
         output_file: CSV file to append to (created with a header if missing).
+        candidate_ids: Mapping of CarParkID -> development name to filter on.
+            Defaults to `CANDIDATE_CARPARK_IDS` (this script's original T1 seed
+            set) when not provided, so existing callers are unaffected.
+            `scripts/build_mall_whitelist.py`'s `observing` state passes
+            exactly the human-signed-off candidate set here instead.
 
     Returns:
         Number of candidate-carpark rows written this poll.
     """
+    ids = candidate_ids if candidate_ids is not None else CANDIDATE_CARPARK_IDS
     output_file.parent.mkdir(parents=True, exist_ok=True)
     write_header = not output_file.exists()
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -89,22 +99,30 @@ def append_samples(records: list[dict[str, str | int]], output_file: Path) -> in
             writer.writerow(["timestamp_utc", "carpark_id", "development", "available_lots"])
         for record in records:
             carpark_id = str(record.get("CarParkID", ""))
-            if carpark_id not in CANDIDATE_CARPARK_IDS:
+            if carpark_id not in ids:
                 continue
-            writer.writerow(
-                [timestamp, carpark_id, CANDIDATE_CARPARK_IDS[carpark_id], record.get("AvailableLots")]
-            )
+            writer.writerow([timestamp, carpark_id, ids[carpark_id], record.get("AvailableLots")])
             written += 1
     return written
 
 
-def run(interval_minutes: int, duration_hours: float, output_file: Path) -> None:
+def run(
+    interval_minutes: int,
+    duration_hours: float,
+    output_file: Path,
+    candidate_ids: dict[str, str] | None = None,
+) -> None:
     """Poll on a fixed interval for a fixed duration, logging progress.
 
     Args:
         interval_minutes: Minutes between polls.
         duration_hours: Total duration to run for, in hours.
         output_file: CSV file to append samples to.
+        candidate_ids: Mapping of CarParkID -> development name to restrict
+            polling to. Defaults to `CANDIDATE_CARPARK_IDS` (this script's
+            original T1 seed set) when not provided -- existing CLI usage is
+            unchanged. `scripts/build_mall_whitelist.py`'s `observing` state
+            passes exactly the human-signed-off candidate set here.
     """
     api_key = os.environ.get("LTA_API_KEY")
     if not api_key:
@@ -116,7 +134,7 @@ def run(interval_minutes: int, duration_hours: float, output_file: Path) -> None
     while time.time() < end_time:
         try:
             records = fetch_carpark_availability(api_key)
-            written = append_samples(records, output_file)
+            written = append_samples(records, output_file, candidate_ids)
             poll_count += 1
             logger.info("Poll %d: wrote %d candidate-carpark rows to %s", poll_count, written, output_file)
         except urllib.error.HTTPError as exc:
