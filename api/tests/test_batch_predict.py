@@ -21,9 +21,11 @@ import pytest
 from _lib.batch_logic import (
     BatchDeps,
     BatchPredictError,
+    HistoryStats,
     STATE_BASELINE,
     STATE_COLD_START,
     STATE_ML,
+    _load_history_stats,
     handle_batch_predict,
     run_batch_predict,
 )
@@ -632,3 +634,84 @@ class TestTenCarparkCount:
         assert len(db.upserted["carpark_forecast"]) == 10
         assert all(row["state"] == STATE_COLD_START for row in db.upserted["carpark_forecast"])
         assert all(row["live_lots"] == 0 for row in db.upserted["carpark_forecast"])
+
+
+class TestLoadHistoryStats:
+    """T6: `_load_history_stats` was rewritten from 3 order+limit=1 point
+    queries per carpark (O(3 x carparks) sequential HTTP round-trips) to a
+    single `select_all` call covering every requested carpark_id at once.
+    These tests target that function directly rather than through
+    `run_batch_predict`, so the request-count reduction is asserted, not
+    just incidentally true.
+    """
+
+    def test_one_select_all_call_computes_correct_stats_for_all_carparks(self) -> None:
+        history: list[dict[str, object]] = []
+        history += make_history_rows(
+            "1", 5, NOW - timedelta(days=10), NOW - timedelta(minutes=5),
+            capacity=50, live_lots=42,
+        )
+        history += make_history_rows(
+            "2", 3, NOW - timedelta(days=5), NOW - timedelta(minutes=10),
+            capacity=80, live_lots=60,
+        )
+        history += make_history_rows(
+            "3", 2, NOW - timedelta(days=1), NOW - timedelta(minutes=1),
+            capacity=120, live_lots=100,
+        )
+        db = FakeSupabaseDB(tables={"carpark_history": history})
+
+        stats = _load_history_stats(db, ["1", "2", "3"])
+
+        # Exactly ONE request total was made against carpark_history -- not
+        # three-per-carpark (9 requests for 3 carparks under the old
+        # implementation). This is the actual regression this rewrite fixes.
+        assert db.select_calls == []
+        assert len(db.select_all_calls) == 1
+        table, params = db.select_all_calls[0]
+        assert table == "carpark_history"
+        assert params["carpark_id"] == "in.(1,2,3)"
+
+        assert stats["1"] == HistoryStats(
+            first_polled_at=NOW - timedelta(days=10),
+            sample_count=5,
+            capacity=50,
+            live_lots=42,
+        )
+        assert stats["2"] == HistoryStats(
+            first_polled_at=NOW - timedelta(days=5),
+            sample_count=3,
+            capacity=80,
+            live_lots=60,
+        )
+        assert stats["3"] == HistoryStats(
+            first_polled_at=NOW - timedelta(days=1),
+            sample_count=2,
+            capacity=120,
+            live_lots=100,
+        )
+
+    def test_carpark_with_no_history_rows_still_gets_safe_default_entry(self) -> None:
+        history = make_history_rows(
+            "1", 5, NOW - timedelta(days=10), NOW - timedelta(minutes=5),
+            capacity=50, live_lots=42,
+        )
+        db = FakeSupabaseDB(tables={"carpark_history": history})
+
+        stats = _load_history_stats(db, ["1", "99"])
+
+        # "99" is absent from carpark_history entirely but must not simply
+        # disappear from the returned dict -- _is_cold_start depends on
+        # every requested carpark_id having an entry.
+        assert set(stats) == {"1", "99"}
+        assert stats["99"] == HistoryStats(
+            first_polled_at=None, sample_count=0, capacity=None, live_lots=None
+        )
+
+    def test_no_carpark_ids_returns_empty_dict_and_makes_no_call(self) -> None:
+        db = FakeSupabaseDB(tables={"carpark_history": []})
+
+        stats = _load_history_stats(db, [])
+
+        assert stats == {}
+        assert db.select_all_calls == []

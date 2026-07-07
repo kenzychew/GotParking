@@ -207,57 +207,65 @@ def _load_active_model_version(db: SupabaseClient) -> str | None:
 def _load_history_stats(db: SupabaseClient, carpark_ids: list[str]) -> dict[str, HistoryStats]:
     """Fetch (first_polled_at, sample_count, capacity, live_lots) per carpark.
 
-    Implemented as three order+limit=1 point queries per carpark rather
-    than a server-side GROUP BY/aggregate, since PostgREST aggregate-
-    function support is an opt-in server capability this project cannot
-    assume is enabled -- order+limit=1 is universally supported by
-    PostgREST. This is O(carparks) requests (30 for the current 10-carpark
-    seed list); acceptable at this scale for a scheduled batch run (not a
-    user-facing request), and called out here as a candidate for later
-    optimization (e.g. a poller-maintained running-max column) should it
-    ever need to shrink.
+    Issues exactly one `select_all` call against `carpark_history` for
+    every requested carpark_id at once (via a `carpark_id=in.(...)`
+    filter, the same idiom `_load_baseline` uses for `carpark_baseline`),
+    rather than the three order+limit=1 point queries per carpark this
+    function used previously -- that was O(3 x carparks) sequential HTTP
+    round-trips, which stops being "acceptable at this scale" once carpark
+    coverage grows past a handful of rows. `carpark_history`'s primary key
+    is `(carpark_id, polled_at)` (already indexed), so a single
+    `carpark_id,polled_at,available_lots` select for all requested
+    carparks is well-supported. The four per-carpark stats are then
+    derived in Python by grouping the returned rows by carpark_id and
+    scanning each group in polled_at order: the earliest row gives
+    first_polled_at, the row count gives sample_count, the latest row's
+    available_lots gives live_lots, and the max available_lots across the
+    group gives capacity.
+
+    Args:
+        db: Supabase client.
+        carpark_ids: Active carpark IDs to load stats for.
+
+    Returns:
+        A dict with one entry per requested carpark_id. A carpark_id with
+        no matching `carpark_history` rows still gets a safe-default entry
+        (`HistoryStats(first_polled_at=None, sample_count=0, capacity=None,
+        live_lots=None)`) rather than being omitted, since `_is_cold_start`
+        expects every requested carpark_id to be present.
     """
-    stats: dict[str, HistoryStats] = {}
-    for carpark_id in carpark_ids:
-        first_result = db.select(
-            "carpark_history",
-            params={
-                "select": "polled_at",
-                "carpark_id": f"eq.{carpark_id}",
-                "order": "polled_at.asc",
-                "limit": "1",
-            },
-            prefer_count=True,
+    stats: dict[str, HistoryStats] = {
+        carpark_id: HistoryStats(
+            first_polled_at=None, sample_count=0, capacity=None, live_lots=None
         )
-        latest_result = db.select(
-            "carpark_history",
-            params={
-                "select": "available_lots",
-                "carpark_id": f"eq.{carpark_id}",
-                "order": "polled_at.desc",
-                "limit": "1",
-            },
+        for carpark_id in carpark_ids
+    }
+    if not carpark_ids:
+        return stats
+
+    ids = ",".join(carpark_ids)
+    rows = db.select_all(
+        "carpark_history",
+        params={
+            "select": "carpark_id,polled_at,available_lots",
+            "carpark_id": f"in.({ids})",
+            "order": "carpark_id.asc,polled_at.asc",
+        },
+    )
+
+    grouped: dict[str, list[tuple[datetime, int]]] = {}
+    for row in rows:
+        grouped.setdefault(row["carpark_id"], []).append(
+            (parse_timestamp(row["polled_at"]), row["available_lots"])
         )
-        capacity_result = db.select(
-            "carpark_history",
-            params={
-                "select": "available_lots",
-                "carpark_id": f"eq.{carpark_id}",
-                "order": "available_lots.desc",
-                "limit": "1",
-            },
-        )
-        sample_count = first_result.total_count or 0
-        first_polled_at = (
-            parse_timestamp(first_result.rows[0]["polled_at"]) if first_result.rows else None
-        )
-        live_lots = latest_result.rows[0]["available_lots"] if latest_result.rows else None
-        capacity = capacity_result.rows[0]["available_lots"] if capacity_result.rows else None
+
+    for carpark_id, samples in grouped.items():
+        samples.sort(key=lambda sample: sample[0])
         stats[carpark_id] = HistoryStats(
-            first_polled_at=first_polled_at,
-            sample_count=sample_count,
-            capacity=capacity,
-            live_lots=live_lots,
+            first_polled_at=samples[0][0],
+            sample_count=len(samples),
+            capacity=max(available for _, available in samples),
+            live_lots=samples[-1][1],
         )
     return stats
 

@@ -55,6 +55,9 @@ class FakeSupabaseDB:
             treats SupabaseUnavailableError identically regardless of which
             attempt inside SupabaseREST produced it).
         fail_upsert: If True, `upsert` raises SupabaseUnavailableError.
+        select_calls: Every (table, params) pair passed to `select`, in
+            call order -- lets tests assert on request counts/shapes.
+        select_all_calls: Same, but for `select_all` calls.
     """
 
     tables: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
@@ -62,6 +65,7 @@ class FakeSupabaseDB:
     fail_tables: set[str] = field(default_factory=set)
     fail_upsert: bool = False
     select_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    select_all_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     upserted: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     download_calls: list[str] = field(default_factory=list)
 
@@ -106,7 +110,9 @@ class FakeSupabaseDB:
     ) -> list[dict[str, Any]]:
         if table in self.fail_tables:
             raise SupabaseUnavailableError(f"select_all {table}")
-        return self._resolve_rows(table, params or {})
+        params = params or {}
+        self.select_all_calls.append((table, dict(params)))
+        return self._resolve_rows(table, params)
 
     def upsert(
         self,
