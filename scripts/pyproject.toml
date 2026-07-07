@@ -1,0 +1,28 @@
+[project]
+name = "gotparking-scripts"
+version = "0.1.0"
+description = "GotParking standalone research/ops scripts (T1 signal validation, mall-carpark whitelist build, seed-list generation)."
+requires-python = ">=3.11"
+dependencies = [
+    "rapidfuzz>=3.0,<4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0,<9",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true

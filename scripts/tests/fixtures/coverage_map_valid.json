@@ -1,0 +1,33 @@
+{
+  "candidates": [
+    {
+      "carpark_id": "205",
+      "name": "Test Mall Alpha",
+      "state": "verified",
+      "development": "TEST MALL ALPHA",
+      "best_match": "Test Mall Alpha",
+      "best_score": 100.0
+    },
+    {
+      "carpark_id": "100",
+      "name": "Test Mall Beta",
+      "state": "verified"
+    },
+    {
+      "carpark_id": "300",
+      "name": "Test Mall Gamma",
+      "state": "observing"
+    },
+    {
+      "carpark_id": "400",
+      "name": "Test Mall Delta",
+      "state": "rejected",
+      "reason": "range 8 < 20"
+    },
+    {
+      "carpark_id": "500",
+      "name": "Test Mall Epsilon",
+      "state": "needs-manual-disambiguation"
+    }
+  ]
+}
