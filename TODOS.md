@@ -186,18 +186,46 @@ the current MVP.
 
 ### Expand to all/hundreds of SG carparks
 
-**What:** Grow the seed list from the initial 10 validated carparks to most/all public SG
-carparks.
+**Status 2026-07-07:** fully planned via `/autoplan` (CEO + Eng review, 3-iteration adversarial
+spec review), and Phase 0 recon has now run against live data. See
+`~/.gstack/projects/gstack-playground/ceo-plans/2026-07-07-carpark-coverage-expansion.md` and
+the reviewed plan at
+`~/.gstack/projects/gstack-playground/kenzy-main-plan-20260707-133103.md`. Scope: a whitelist-
+matching script (`scripts/recon_mall_whitelist.py`, LTA feed x data.gov.sg's "Carpark Rates"
+dataset, `rapidfuzz >= 85`), reused T1-style variance validation, a training-eligibility gate
+extension (`model_config.first_promotion_at`) so new carparks don't dilute the original 10's
+first-ever promotion, and a human sign-off gate on every matched batch (not just the first —
+see below). Ship order is a hard constraint: eligibility gate -> poller change -> whitelist
+script's live auto-insert. Not yet implemented — this entry now tracks implementation, not just
+intent.
+
+**Phase 0 recon result (2026-07-07):** ran `scripts/recon_mall_whitelist.py` against the live
+LTA feed (500 total carparks) and data.gov.sg's mall dataset (357 rows). Real count: **18 new
+candidates** (17 matched, 1 needing manual disambiguation) — squarely in the "small" bucket.
+**Decision: build Approach C (CI-generated static list), not Approach B (DB-driven poller)** —
+the poller stays a pure static-config Cloudflare Worker; the whitelist script's output becomes a
+PR-reviewed regeneration of the existing literal list, not a new runtime Supabase dependency.
+The recon run also caught a real false-positive live: carpark_id 64 ("Junction 8") fuzzy-matched
+"Junction 10" at 85.7 — two different, unrelated malls, above the 85 threshold — concrete proof
+the human sign-off gate (not just variance validation) is load-bearing, not theoretical.
+
+**What:** Grow the seed list from the initial 10 validated carparks to every mall carpark
+visible in the LTA feed (bounded by LTA's own feed coverage, not literally "all SG malls" —
+private-operator carparks that don't report to HDB/LTA/URA won't appear regardless).
 
 **Why:** Natural next phase once the 10-carpark MVP proves the pipeline works end-to-end.
-Surfaced during CEO review's expansion scan.
+Surfaced during CEO review's expansion scan; now fully planned per above.
 
 **Context:** Each new carpark needs its own signal-strength validation (repeat of T1) before
-being added — not just a config change.
+being added — not just a config change. The fully-planned version also found and closed a real
+gap: the training promotion gate pools MAE across ALL carparks globally, so new carparks
+clearing cold-start could dilute the original 10's model quality without an explicit gate —
+see the "training-eligibility maturity gate" TODO below for the residual (intentionally
+out-of-scope-for-now) risk this doesn't fully close.
 
 **Effort:** M-L (per batch of carparks)
 **Priority:** P3
-**Depends on:** MVP launched and stable.
+**Depends on:** MVP launched and stable (already true — see README.md's Status section).
 
 ### Multi-modal trip advice (carpark + bus/MRT combined forecast)
 
@@ -231,5 +259,90 @@ revisiting once the carpark MVP has proven the pattern works in production.
 **Effort:** XL
 **Priority:** P4
 **Depends on:** Carpark MVP live, stable, and validated as a template worth generalizing.
+
+### Recurring per-carpark training-eligibility/maturity gate
+
+**What:** `model_config.first_promotion_at` (planned as part of the carpark coverage expansion
+above) only protects the ORIGINAL 10 carparks' first-ever promotion — once it's set, every
+subsequently-verified new carpark is immediately eligible for pooled training with zero
+onboarding/seasoning period of its own. This item is a per-onboarding-wave (not just
+one-time-system-wide) eligibility gate, or per-carpark MAE visibility in `training_runs`.
+
+**Why:** The training promotion gate computes ONE pooled MAE across every eligible carpark for
+ONE global model — no per-carpark quality visibility exists anywhere in the audit trail. A large
+future onboarding wave (a dozen+ newly-warmed, still-noisy carparks at once) could dilute the
+pooled MAE for every carpark's forecast quality, not just its own, with nothing in
+`training_runs` able to distinguish "the model got worse" from "a batch of new carparks pooled
+in were unusually noisy this cycle."
+
+**Context:** Explicitly identified during the coverage-expansion `/autoplan` review (both the
+Premise Gate and an independent CEO subagent review flagged this). Deliberately NOT fully solved
+by that plan — the user explicitly declined "fix the promotion gate now" at the Premise Gate,
+since it would mean touching `gate.py`'s promotion/MAE internals, a bigger and riskier change
+than the coverage expansion itself needed. This TODO exists so the decision to defer doesn't
+quietly become permanent.
+
+**Trigger condition (not just "someday"):** revisit before the 3rd wave of new carparks is
+onboarded, or immediately if any single onboarding wave is a dozen-plus carparks relative to the
+existing pool.
+
+**Effort:** L (schema change for per-carpark MAE tracking + `gate.py` logic changes)
+**Priority:** P3
+**Depends on:** The coverage-expansion plan above shipping first (need real onboarding waves to
+size the actual risk against, not just the original 10).
+
+### "Vote for your mall" request feature
+
+**What:** Let users request a mall carpark not yet covered, feeding a prioritized backlog for
+future coverage-expansion waves.
+
+**Why:** Surfaced during the coverage-expansion `/autoplan` CEO review's cherry-pick scan as a
+genuine engagement/prioritization idea — lets real user demand (not just LTA feed availability)
+drive which malls get added next.
+
+**Context:** Needs its own design pass (new UI state, lightweight backend to collect/tally
+requests) — deferred as outside the coverage-expansion plan's blast radius, not rejected.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** The coverage-expansion plan above shipping first (there needs to be a visible
+"not covered" state for users to vote from, which already exists via `NotCoveredState.tsx`).
+
+### "Closest known mall" fuzzy suggestion in NotCoveredState
+
+**What:** When a search doesn't match any supported carpark, suggest the closest known
+supported mall instead of a flat "not covered" message.
+
+**Why:** Surfaced during the coverage-expansion `/autoplan` CEO review's cherry-pick scan as a
+UX delight opportunity — softens the not-covered dead end into a helpful redirect.
+
+**Context:** Needs its own UX design pass (what "closest" means — name-similarity? geographic
+proximity, which the app doesn't currently model at all?) — deferred as a real feature decision,
+not a mechanical widening.
+
+**Effort:** S-M
+**Priority:** P3
+**Depends on:** None directly, though more useful once coverage widens (more candidates to
+suggest from).
+
+### Recurring auto-discovery pipeline for new mall carparks
+
+**What:** Instead of the coverage-expansion plan's one-shot whitelist script, a recurring weekly
+job that watches the live LTA feed for newly-appearing carparks, auto-matches them, and
+auto-queues verified candidates for T1-style variance validation — turning "expand coverage"
+into a self-sustaining pipeline rather than a manual, repeat-when-remembered exercise.
+
+**Why:** Surfaced as the coverage-expansion `/autoplan` CEO review's own "10x check" — the
+ambitious version of the one-shot script that ships first.
+
+**Context:** Connects directly to the existing "Generalize into a reusable SG Civic Forecast
+platform" TODO below — the same "verify a candidate entity, then onboard it" shape would apply
+to bus/taxi forecasting too, so this is worth building with that reuse in mind once it's
+prioritized.
+
+**Effort:** L
+**Priority:** P3
+**Depends on:** The one-shot coverage-expansion plan above shipping and proving out the
+match/validate/insert pipeline manually first.
 
 ## Completed
