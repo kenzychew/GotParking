@@ -29,13 +29,19 @@
 -- 1) carparks -- seed whitelist (LTA DataMall CarParkID is a string)
 -- ----------------------------------------------------------------------------
 create table if not exists public.carparks (
-    carpark_id  text primary key,
-    name        text not null,
+    carpark_id       text primary key,
+    name             text not null,
     -- SINPA dataset column index for pretraining (D13); null = absent from
     -- SINPA (Raffles City, VivoCity P2) -> that carpark trains live-only.
-    sinpa_index integer,
-    active      boolean not null default true,
-    created_at  timestamptz not null default now()
+    sinpa_index      integer,
+    active           boolean not null default true,
+    -- One-time training-eligibility gate (T2): true for the original 10
+    -- validated seed carparks only -- any carpark added later via the
+    -- coverage-expansion whitelist script gets the default false, and is
+    -- excluded from the pooled training run until model_config.first_promotion_at
+    -- is set (see model_config below).
+    is_original_seed boolean not null default false,
+    created_at       timestamptz not null default now()
 );
 
 comment on table public.carparks is
@@ -138,6 +144,11 @@ create table if not exists public.model_config (
     -- null = no promoted model yet -> batch predict serves baseline-only.
     active_model_version text,
     promoted_at          timestamptz,
+    -- Tracks the first-ever system-wide promotion (T2); NULL means no
+    -- promotion has happened yet. Once set, it is never cleared/overwritten
+    -- by later retrains -- it opens the training-eligibility gate for every
+    -- non-seed carpark permanently, it does not re-track "most recent".
+    first_promotion_at   timestamptz,
     updated_at           timestamptz not null default now()
 );
 
@@ -205,17 +216,17 @@ on conflict (id) do nothing;
 -- The 10 validated seed carparks (T1) with their SINPA column indices (T0/D13;
 -- exact 0.0m coordinate matches). Raffles City and VivoCity P2 are absent from
 -- SINPA -> sinpa_index null -> live-only training.
-insert into public.carparks (carpark_id, name, sinpa_index) values
-    ('1',  'Suntec City',    1584),
-    ('2',  'Marina Square',  1593),
-    ('3',  'Raffles City',   null),
-    ('11', 'Cineleisure',    1585),
-    ('13', 'Ngee Ann City',  1587),
-    ('15', 'Wheelock Place', 1589),
-    ('16', 'VivoCity P3',    1590),
-    ('21', 'Centrepoint',    1595),
-    ('24', '313@Somerset',   1597),
-    ('50', 'VivoCity P2',    null)
+insert into public.carparks (carpark_id, name, sinpa_index, is_original_seed) values
+    ('1',  'Suntec City',    1584, true),
+    ('2',  'Marina Square',  1593, true),
+    ('3',  'Raffles City',   null, true),
+    ('11', 'Cineleisure',    1585, true),
+    ('13', 'Ngee Ann City',  1587, true),
+    ('15', 'Wheelock Place', 1589, true),
+    ('16', 'VivoCity P3',    1590, true),
+    ('21', 'Centrepoint',    1595, true),
+    ('24', '313@Somerset',   1597, true),
+    ('50', 'VivoCity P2',    null, true)
 on conflict (carpark_id) do nothing;
 
 -- Singleton config row: no promoted model yet -> baseline-only serving.

@@ -86,14 +86,21 @@ def _slot_dependent_history_rows(
 def _base_db(
     history_rows: list[HistoryRow], carpark_id: str = "1", sinpa_index: int | None = None,
 ) -> FakeSupabaseDB:
+    # is_original_seed=True: these integration tests exercise gate/SINPA/
+    # crash-handling behavior unrelated to the T2 eligibility gate, so the
+    # test carpark is modeled as an original seed carpark -- exactly the
+    # "already mid-flight in production" case the T2 gate must never
+    # retroactively exclude (see test_data_loading.py's
+    # TestSystemWideEligibilityGate for the gate's own dedicated coverage).
     return FakeSupabaseDB(
         tables={
             "carparks": [
                 {"carpark_id": carpark_id, "name": "Test Carpark", "sinpa_index": sinpa_index,
-                 "active": True}
+                 "active": True, "is_original_seed": True}
             ],
             "carpark_history": history_rows,
-            "model_config": [{"singleton": True, "active_model_version": None}],
+            "model_config": [{"singleton": True, "active_model_version": None,
+                               "first_promotion_at": None}],
         }
     )
 
@@ -405,12 +412,13 @@ class TestEmptyHoldoutCarparkExcluded:
             tables={
                 "carparks": [
                     {"carpark_id": "1", "name": "Carpark One", "sinpa_index": None,
-                     "active": True},
+                     "active": True, "is_original_seed": True},
                     {"carpark_id": "2", "name": "Carpark Two", "sinpa_index": None,
-                     "active": True},
+                     "active": True, "is_original_seed": True},
                 ],
                 "carpark_history": rows_1 + rows_2,
-                "model_config": [{"singleton": True, "active_model_version": None}],
+                "model_config": [{"singleton": True, "active_model_version": None,
+                                   "first_promotion_at": None}],
             }
         )
         deps = _make_deps(db, now)
@@ -502,6 +510,60 @@ class TestSinpaIntegration:
         result = run(deps)
 
         assert result.used_sinpa is False
+
+    def test_non_seed_carpark_with_sinpa_index_excluded_from_sinpa_mappings(
+        self, five_day_history: tuple[datetime, list[HistoryRow]]
+    ) -> None:
+        """Test Requirements (T8): a carpark with `sinpa_index` set but
+        `is_original_seed=False` and `model_config.first_promotion_at`
+        null must be excluded from `sinpa_mappings` -- otherwise the
+        separate SINPA pooling path would silently bypass the T2
+        system-wide eligibility gate that `filter_eligible_carparks`
+        enforces for live rows.
+        """
+        now, seed_rows = five_day_history
+        db = FakeSupabaseDB(
+            tables={
+                "carparks": [
+                    {"carpark_id": "1", "name": "Seed Carpark", "sinpa_index": 1584,
+                     "active": True, "is_original_seed": True},
+                    # No live history at all for "60" -- also cold-start
+                    # excluded, but the point of this test is that its
+                    # sinpa_index must be excluded from sinpa_mappings
+                    # regardless of live cold-start status (Premise #1's
+                    # SINPA/cold-start independence still holds -- only the
+                    # T2 gate is new here).
+                    {"carpark_id": "60", "name": "New Carpark", "sinpa_index": 9999,
+                     "active": True, "is_original_seed": False},
+                ],
+                "carpark_history": seed_rows,
+                "model_config": [{"singleton": True, "active_model_version": None,
+                                   "first_promotion_at": None}],
+            }
+        )
+        captured_mappings: list[Sequence[SinpaCarparkMapping]] = []
+
+        def fake_load_sinpa(
+            mappings: Sequence[SinpaCarparkMapping],
+        ) -> dict[str, list[TrainingRow]]:
+            captured_mappings.append(mappings)
+            from gotparking_training.series import TimedSample, build_rows_from_series
+
+            start = datetime(2020, 7, 1, tzinfo=timezone.utc)
+            series = [
+                TimedSample(start + timedelta(minutes=5 * i), _BASE_VALUE)
+                for i in range(200)
+            ]
+            return {"1": build_rows_from_series("1", series)}
+
+        deps = _make_deps(db, now, load_sinpa=fake_load_sinpa)
+
+        result = run(deps)
+
+        assert len(captured_mappings) == 1
+        mapped_ids = {mapping.carpark_id for mapping in captured_mappings[0]}
+        assert mapped_ids == {"1"}
+        assert result.used_sinpa is True
 
 
 class TestMainEntryPoint:

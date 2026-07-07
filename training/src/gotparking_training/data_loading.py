@@ -60,12 +60,47 @@ def compute_history_stats(series: Sequence[TimedSample]) -> tuple[datetime | Non
     return min(sample.at for sample in series), len(series)
 
 
+def is_system_wide_training_eligible(
+    carpark: CarparkInfo, first_promotion_at: datetime | None,
+) -> bool:
+    """Decide whether `carpark` clears the one-time T2 eligibility gate.
+
+    This is INDEPENDENT of cold-start/live-sample status (see
+    `is_cold_start` for that): it only encodes the "which carparks are
+    allowed to influence the pooled model at all, right now" rule that
+    protects the original 10 seed carparks' first-ever promotion from
+    being diluted by newly-onboarded, still-noisy carparks. Once ANY
+    promotion has ever happened system-wide (`first_promotion_at` is not
+    None), every carpark that separately clears cold-start becomes
+    eligible -- matching the original (pre-T2) design, where this gate
+    stops mattering after the first promotion rather than becoming a
+    permanent per-carpark quality bar.
+
+    Used both by `filter_eligible_carparks` (live training rows) and by
+    `train.run`'s SINPA-mapping selection, so the two pooling paths can
+    never silently diverge on this rule.
+
+    Args:
+        carpark: The carpark whitelist entry to check.
+        first_promotion_at: `model_config.first_promotion_at` (from
+            `repository.load_first_promotion_at`) -- None if no promotion
+            has ever happened system-wide yet.
+
+    Returns:
+        True if `carpark.is_original_seed` is True, OR `first_promotion_at`
+        is not None.
+    """
+    return carpark.is_original_seed or first_promotion_at is not None
+
+
 def filter_eligible_carparks(
     carparks: Sequence[CarparkInfo],
     history: dict[str, list[TimedSample]],
     now: datetime,
+    first_promotion_at: datetime | None,
 ) -> list[CarparkInfo]:
-    """Apply the cold-start exclusion (Premise #10) to the carpark whitelist.
+    """Apply the cold-start exclusion (Premise #10) AND the T2 one-time
+    system-wide eligibility gate to the carpark whitelist.
 
     Args:
         carparks: The active-carpark whitelist (from
@@ -75,12 +110,17 @@ def filter_eligible_carparks(
             treated as having zero samples (never polled yet).
         now: The training run's start instant, used to compute each
             carpark's data age.
+        first_promotion_at: `model_config.first_promotion_at` (from
+            `repository.load_first_promotion_at`) -- None if no promotion
+            has ever happened system-wide yet. See
+            `is_system_wide_training_eligible`.
 
     Returns:
-        The subset of `carparks` that clear the cold-start threshold, in
-        the same order as the input. Excluded carparks are logged at INFO
-        with their age/sample-count so a training run's logs explain
-        exactly which carparks were skipped and why.
+        The subset of `carparks` that clear BOTH the cold-start threshold
+        AND the system-wide eligibility gate, in the same order as the
+        input. Excluded carparks are logged at INFO with the reason so a
+        training run's logs explain exactly which carparks were skipped
+        and why.
     """
     eligible: list[CarparkInfo] = []
     for carpark in carparks:
@@ -91,6 +131,13 @@ def filter_eligible_carparks(
                 "excluding cold-start carpark carpark_id=%s name=%s first_polled_at=%s "
                 "sample_count=%d",
                 carpark.carpark_id, carpark.name, first_at, count,
+            )
+            continue
+        if not is_system_wide_training_eligible(carpark, first_promotion_at):
+            logger.info(
+                "excluding non-seed carpark carpark_id=%s name=%s: no system-wide "
+                "promotion has happened yet (model_config.first_promotion_at is null)",
+                carpark.carpark_id, carpark.name,
             )
             continue
         eligible.append(carpark)

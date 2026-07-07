@@ -40,7 +40,11 @@ from gotparking_training.config import (
     HOLDOUT_DAYS,
     load_settings,
 )
-from gotparking_training.data_loading import filter_eligible_carparks, load_carpark_history
+from gotparking_training.data_loading import (
+    filter_eligible_carparks,
+    is_system_wide_training_eligible,
+    load_carpark_history,
+)
 from gotparking_training.healthchecks import ping_fail, ping_success
 from gotparking_training.modeling import mean_absolute_error, predict, train_candidate
 from gotparking_training.model_io import (
@@ -52,6 +56,7 @@ from gotparking_training.repository import (
     insert_training_run,
     load_active_carparks,
     load_active_model_version,
+    load_first_promotion_at,
     promote_model_config,
 )
 from gotparking_training.series import TrainingRow, build_rows_from_series
@@ -215,12 +220,13 @@ def run(deps: TrainDeps) -> RunResult:
     # here, not a claim that an artifact was uploaded under it -- `notes`
     # and `promoted` disambiguate what actually happened.
     active_version = load_active_model_version(deps.db)
+    first_promotion_at = load_first_promotion_at(deps.db)
     phase = gate.determine_phase(active_version)
     candidate_version = make_version(now)
 
     all_carparks = load_active_carparks(deps.db)
     history = load_carpark_history(deps.db)
-    eligible_carparks = filter_eligible_carparks(all_carparks, history, now)
+    eligible_carparks = filter_eligible_carparks(all_carparks, history, now, first_promotion_at)
 
     if not eligible_carparks:
         return _skip_result(
@@ -245,11 +251,18 @@ def run(deps: TrainDeps) -> RunResult:
     # SINPA pretraining is independent of live cold-start status (Premise
     # #1: the cold-start gate only ever counts LIVE samples) -- every
     # SINPA-mapped carpark in the whitelist contributes, not just the
-    # currently-eligible ones.
+    # currently-eligible ones. It MUST still respect the T2 system-wide
+    # eligibility gate, though (same boolean condition as
+    # filter_eligible_carparks): today's whitelist-script plan never sets
+    # sinpa_index on newly-onboarded carparks, so this is currently dormant
+    # risk, but a future carpark with both sinpa_index set and
+    # is_original_seed=False must not bypass the gate via this separate
+    # pooling path.
     sinpa_mappings = [
         SinpaCarparkMapping(carpark.carpark_id, carpark.sinpa_index)
         for carpark in all_carparks
         if carpark.sinpa_index is not None
+        and is_system_wide_training_eligible(carpark, first_promotion_at)
     ]
     used_sinpa = False
     sinpa_rows: list[TrainingRow] = []
@@ -331,7 +344,9 @@ def run(deps: TrainDeps) -> RunResult:
                 ran_at=now,
             )
             raise TrainingJobError("model artifact upload failed") from exc
-        promote_model_config(deps.db, candidate_version, now)
+        promote_model_config(
+            deps.db, candidate_version, now, first_promotion=(phase == gate.PHASE_FIRST_PROMOTION),
+        )
         notes = "promoted"
     else:
         notes = "did not clear the promotion gate"

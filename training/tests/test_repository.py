@@ -9,6 +9,7 @@ from gotparking_training.repository import (
     insert_training_run,
     load_active_carparks,
     load_active_model_version,
+    load_first_promotion_at,
     promote_model_config,
 )
 from tests.fakes import FakeSupabaseDB
@@ -22,11 +23,11 @@ class TestLoadActiveCarparks:
             tables={
                 "carparks": [
                     {"carpark_id": "1", "name": "Suntec City", "sinpa_index": 1584,
-                     "active": True},
+                     "active": True, "is_original_seed": True},
                     {"carpark_id": "3", "name": "Raffles City", "sinpa_index": None,
-                     "active": True},
+                     "active": True, "is_original_seed": True},
                     {"carpark_id": "99", "name": "Retired Carpark", "sinpa_index": None,
-                     "active": False},
+                     "active": False, "is_original_seed": False},
                 ]
             }
         )
@@ -34,8 +35,8 @@ class TestLoadActiveCarparks:
         carparks = load_active_carparks(db)
 
         assert carparks == [
-            CarparkInfo("1", "Suntec City", 1584, True),
-            CarparkInfo("3", "Raffles City", None, True),
+            CarparkInfo("1", "Suntec City", 1584, True, is_original_seed=True),
+            CarparkInfo("3", "Raffles City", None, True, is_original_seed=True),
         ]
 
     def test_only_selects_active_true(self) -> None:
@@ -43,6 +44,22 @@ class TestLoadActiveCarparks:
         load_active_carparks(db)
 
         assert db.select_calls[0][1]["active"] == "eq.true"
+
+    def test_defaults_is_original_seed_to_false_when_column_absent(self) -> None:
+        """A future/older row shape missing the T2 column entirely must
+        never be silently treated as an original seed carpark."""
+        db = FakeSupabaseDB(
+            tables={
+                "carparks": [
+                    {"carpark_id": "60", "name": "New Carpark", "sinpa_index": None,
+                     "active": True},
+                ]
+            }
+        )
+
+        carparks = load_active_carparks(db)
+
+        assert carparks == [CarparkInfo("60", "New Carpark", None, True, is_original_seed=False)]
 
 
 class TestLoadActiveModelVersion:
@@ -61,6 +78,22 @@ class TestLoadActiveModelVersion:
         assert load_active_model_version(db) is None
 
 
+class TestLoadFirstPromotionAt:
+    def test_returns_none_when_null(self) -> None:
+        db = FakeSupabaseDB(tables={"model_config": [{"first_promotion_at": None}]})
+        assert load_first_promotion_at(db) is None
+
+    def test_returns_none_when_row_missing(self) -> None:
+        db = FakeSupabaseDB(tables={"model_config": []})
+        assert load_first_promotion_at(db) is None
+
+    def test_returns_parsed_timestamp_when_set(self) -> None:
+        db = FakeSupabaseDB(
+            tables={"model_config": [{"first_promotion_at": _NOW.isoformat()}]}
+        )
+        assert load_first_promotion_at(db) == _NOW
+
+
 class TestPromoteModelConfig:
     def test_patches_singleton_row_with_version_and_timestamps(self) -> None:
         db = FakeSupabaseDB(tables={"model_config": [{"singleton": True,
@@ -75,6 +108,16 @@ class TestPromoteModelConfig:
         assert patch["active_model_version"] == "lgbm_20260706_050000"
         assert patch["promoted_at"] == _NOW.isoformat()
         assert patch["updated_at"] == _NOW.isoformat()
+        assert "first_promotion_at" not in patch
+
+    def test_first_promotion_true_also_stamps_first_promotion_at(self) -> None:
+        db = FakeSupabaseDB(tables={"model_config": [{"singleton": True,
+                                                        "active_model_version": None}]})
+
+        promote_model_config(db, "lgbm_20260706_050000", _NOW, first_promotion=True)
+
+        _, _, patch = db.updated[0]
+        assert patch["first_promotion_at"] == _NOW.isoformat()
 
 
 class TestInsertTrainingRun:
