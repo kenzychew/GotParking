@@ -30,6 +30,6 @@ npm run typecheck           # tsc --noEmit
 npm run deploy               # wrangler deploy
 ```
 
-Test framework: Vitest, 38/38 passing.
+Test framework: Vitest, 39/39 passing.
 
 Design doc: `~/.gstack/projects/gstack-playground/kenzy-unknown-design-20260702-210951.md`

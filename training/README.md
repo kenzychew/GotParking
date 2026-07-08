@@ -12,7 +12,12 @@ Entry point: `python -m gotparking_training` (see `pyproject.toml`'s `packages =
 
 1. Load the active-carpark whitelist and all of `carpark_history` (paginated), excluding
    carparks below the cold-start threshold (Premise #10: first sample <72h old, or fewer than
-   10 live samples -- SINPA rows never count toward this).
+   10 live samples -- SINPA rows never count toward this) AND, as of the 2026-07-08 coverage
+   expansion, carparks that aren't `is_original_seed` until `model_config.first_promotion_at`
+   is set (a one-time, system-wide gate protecting the original 10's first-ever promotion from
+   being diluted by newly-onboarded, still-noisy carparks -- see
+   `data_loading.is_system_wide_training_eligible`, shared by both the live-row filter here and
+   the SINPA-mapping selection in step 3, so the two pooling paths can't diverge on this rule).
 2. Build momentum/label rows: for each reading, join the 15/30/60-min-ago momentum offsets and
    the t+20min label via nearest-within-+/-2.5min lookups, dropping the row if any join misses
    (a poll gap must never fabricate a value).

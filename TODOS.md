@@ -149,19 +149,27 @@ is a genuine enhancement once more carparks exist.
 
 ### Fully generated seed-list pipeline (replace hand-maintained static files)
 
-**What:** `SEED_CARPARKS`/`SEED_CARPARK_NAMES` are still hand-maintained TypeScript literals —
-the mall wave's 16 verified candidates were never actually wired into them (Approach C's
-regeneration script exists but hasn't been exercised against real verified output yet). A fully
-generated pipeline would make `carparks` (the DB table) the only source of truth end-to-end.
+**Status 2026-07-08:** the narrower version of this gap is now CLOSED — `SEED_CARPARKS`/
+`SEED_CARPARK_NAMES` are no longer hand-edited; `scripts/regen_seed_lists.py` has been run for
+real against the mall wave's 14 verified candidates (`poller/src/carparks.ts` and
+`frontend/src/seed/seedCarparks.ts` both carry generator-credited headers now). What remains is
+the BIGGER version below — removing hand-maintenance as a *concept* everywhere, not just this
+one file pair.
+
+**What:** Even with the regenerator in place, `carparks` (the DB table) still isn't the single
+source of truth end-to-end — `db/schema.sql`'s seed INSERTs only cover the original 10; the 14
+coverage-expansion rows exist solely in production (applied via one-off SQL from
+`build_mall_whitelist.py`'s output), never captured back into the repo. A fresh `schema.sql`
+apply reproduces 10 carparks, not the live 24 — a real reproducibility gap, not yet closed. A
+fully generated pipeline would resolve this too, not just the TS seed-list files.
 
 **Why:** Surfaced during the full-feed carpark-expansion `/autoplan` review — the Eng subagent
 flagged this as "a recurring unpaid debt this plan is about to compound a second time," having
-already gone unpaid once in the mall wave.
+already gone unpaid once in the mall wave (before Approach C landed). The schema-reproducibility
+half of the gap was found independently during a post-ship `/document-release` audit.
 
-**Context:** The full-feed plan's baseline scope includes making Approach C's regeneration
-script actually work for its first wave (see that plan's Implementation Tasks) — this TODO is
-the bigger, generalized version (removing hand-maintenance entirely, not just running the
-existing generator once more).
+**Context:** The narrower TS-seed-list gap is done; the schema-reproducibility gap and the full
+"remove hand-maintenance as a concept" version are what's left.
 
 **Effort:** L
 **Priority:** P3
@@ -170,12 +178,19 @@ pattern works end-to-end.
 
 ### Remaining ~400 LTA feed carparks (held pending accuracy validation)
 
-**What:** The full-feed carpark-expansion plan was capped at CEO review to a first wave of
+**Status 2026-07-08:** T0 (the load test gating this wave's capacity decision) is DONE — see
+`docs/t0-load-test-2026-07-08.md`. Result: comfortable headroom (LightGBM inference cost is
+negligible; the dominant cost, one Supabase read, stays flat regardless of carpark count thanks
+to the N+1 fix). Capacity is no longer the blocker for the 50-100 first sub-wave — the
+accuracy-validation gate (below) still is, unchanged. No carparks from this wave have been
+onboarded yet; only T0 has run.
+
+**What:** The full-feed carpark-expansion plan was capped at CEO review to a first sub-wave of
 50-100 carparks. The remaining ~400 (the rest of the LTA `CarParkAvailabilityv2` feed, mostly
 HDB) are explicitly deferred, not rejected.
 
-**Why:** An independent CEO review flagged that scaling carpark COUNT 18x before the model has
-produced a single validated forecast (all 10 seed carparks are still `cold_start`) optimizes a
+**Why:** An independent CEO review flagged that scaling carpark COUNT before the model has
+produced a single validated forecast (all 24 carparks are still `cold_start`) optimizes a
 variable a technical evaluator (GovTech/OGP, per this project's own stated purpose) doesn't
 actually judge — coverage breadth isn't the differentiator, forecast accuracy is. The user
 agreed and capped scope rather than proceeding with the full feed or pausing entirely.
@@ -184,9 +199,10 @@ agreed and capped scope rather than proceeding with the full feed or pausing ent
 `~/.gstack/projects/gstack-playground/kenzy-main-plan-20260707-231353.md`'s CEO Dual-Voice
 Review section and Strategic Gate resolution.
 
-**Trigger condition (not just "someday"):** revisit once the existing 10 seed + 16 mall carparks
-have produced real, benchmarked accuracy numbers (forecast vs. actual, vs. historical-average
-and persistence baselines) from a completed first training promotion.
+**Trigger condition (not just "someday"):** revisit once the existing 24 carparks (10 original
+seed + 14 verified mall candidates) have produced real, benchmarked accuracy numbers (forecast
+vs. actual, vs. historical-average and persistence baselines) from a completed first training
+promotion.
 
 **Effort:** L (per remaining batch, same pattern as the first wave)
 **Priority:** P3
@@ -293,28 +309,42 @@ the current MVP.
 
 ### Expand to all/hundreds of SG carparks
 
-**Status 2026-07-07:** fully planned via `/autoplan` (CEO + Eng review, 3-iteration adversarial
-spec review), and Phase 0 recon has now run against live data. See
+**Status 2026-07-08: mall wave (first wave) DONE and live.** Full plan + 3-iteration adversarial
+spec review + Eng dual-voice review:
 `~/.gstack/projects/gstack-playground/ceo-plans/2026-07-07-carpark-coverage-expansion.md` and
-the reviewed plan at
-`~/.gstack/projects/gstack-playground/kenzy-main-plan-20260707-133103.md`. Scope: a whitelist-
-matching script (`scripts/recon_mall_whitelist.py`, LTA feed x data.gov.sg's "Carpark Rates"
-dataset, `rapidfuzz >= 85`), reused T1-style variance validation, a training-eligibility gate
-extension (`model_config.first_promotion_at`) so new carparks don't dilute the original 10's
-first-ever promotion, and a human sign-off gate on every matched batch (not just the first —
-see below). Ship order is a hard constraint: eligibility gate -> poller change -> whitelist
-script's live auto-insert. Not yet implemented — this entry now tracks implementation, not just
-intent.
+`~/.gstack/projects/gstack-playground/kenzy-main-plan-20260707-133103.md`.
 
-**Phase 0 recon result (2026-07-07):** ran `scripts/recon_mall_whitelist.py` against the live
-LTA feed (500 total carparks) and data.gov.sg's mall dataset (357 rows). Real count: **18 new
-candidates** (17 matched, 1 needing manual disambiguation) — squarely in the "small" bucket.
-**Decision: build Approach C (CI-generated static list), not Approach B (DB-driven poller)** —
-the poller stays a pure static-config Cloudflare Worker; the whitelist script's output becomes a
-PR-reviewed regeneration of the existing literal list, not a new runtime Supabase dependency.
-The recon run also caught a real false-positive live: carpark_id 64 ("Junction 8") fuzzy-matched
-"Junction 10" at 85.7 — two different, unrelated malls, above the 85 threshold — concrete proof
-the human sign-off gate (not just variance validation) is load-bearing, not theoretical.
+**Final outcome (all 18 mall candidates resolved):**
+- **14 verified and LIVE**: Millenia Singapore, Orchard Point, The Heeren, Plaza Singapura, The
+  Cathay, Wisma Atria, Harbourfront Centre, Far East Plaza, ION Orchard, Orchard Central,
+  Westgate, IMM Building, Tampines Mall, Bedok Mall — inserted into `carparks`
+  (`is_original_seed=false`), seed lists regenerated (`scripts/regen_seed_lists.py`), poller
+  and frontend redeployed. Confirmed live: `/api/forecast` returns all 24 carparks.
+- **3 rejected** (insufficient lot-count variance, correctly caught by the T1 gate): Bt Panjang
+  Plaza (range 0, flat the entire 6-hour window), Singapore Flyer (range 7), Concorde Hotel
+  (range 13, resolved as a genuine dual-listing in the source dataset, not two carparks — signed
+  off, then rejected by variance, not by the disambiguation question).
+- **1 excluded, never advanced**: Junction 8 (carpark_id 64) — a confirmed live false positive
+  (fuzzy-matched "Junction 10" at 85.7%, two different, unrelated malls, above the 85 threshold,
+  with no second candidate close enough to trip ambiguity detection). Concrete, non-hypothetical
+  proof the human sign-off gate (not just variance validation) is load-bearing — fuzzy-match and
+  variance validation are NOT orthogonal checks; neither alone nor combined catches a
+  confidently-wrong-building match.
+
+**Architecture decision, made with real data:** Approach C (CI-generated static list) over
+Approach B (DB-driven poller) — the real recon count (18) was too small to justify a new
+poller-side runtime Supabase dependency. The poller stays a pure static-config Cloudflare
+Worker; `scripts/regen_seed_lists.py` regenerates `poller/src/carparks.ts` and
+`frontend/src/seed/seedCarparks.ts` from `data/carpark_coverage_map.json`, preserving every
+existing comment/type/helper function byte-for-byte (only the data literal changes).
+
+**Training-eligibility gate is live and verified end-to-end**: `carparks.is_original_seed` /
+`model_config.first_promotion_at` (`db/schema.sql`) ship real production values — all 10
+original seeds `true`, all 14 new carparks `false` (confirmed via a manual training-job trigger,
+`gh workflow run train.yml`, whose logs show both new columns read correctly against production
+schema with zero errors). The gate protects the original 10's first-ever promotion from being
+diluted by the new carparks' noise; it will open once, system-wide, the moment that promotion
+happens.
 
 **What:** Grow the seed list from the initial 10 validated carparks to every mall carpark
 visible in the LTA feed (bounded by LTA's own feed coverage, not literally "all SG malls" —
@@ -330,9 +360,12 @@ clearing cold-start could dilute the original 10's model quality without an expl
 see the "training-eligibility maturity gate" TODO below for the residual (intentionally
 out-of-scope-for-now) risk this doesn't fully close.
 
-**Effort:** M-L (per batch of carparks)
-**Priority:** P3
-**Depends on:** MVP launched and stable (already true — see README.md's Status section).
+**Effort:** M-L (per batch of carparks) — **mall wave (18 candidates) DONE, ~5 hours end to
+end** including 2 full review cycles, implementation, and two 6-hour observation windows.
+**Priority:** P3 — mall wave complete; remaining scope now lives entirely in "Remaining ~400 LTA
+feed carparks" below (separately tracked, held pending accuracy validation).
+**Depends on:** MVP launched and stable (was already true). Mall wave's own dependency (T1.5
+provisioning) is satisfied; DONE.
 
 ### Multi-modal trip advice (carpark + bus/MRT combined forecast)
 

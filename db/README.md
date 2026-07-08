@@ -6,9 +6,18 @@ Supabase schema and RLS posture (T2 in the design doc's Implementation Tasks).
 rollback posture. Seven tables -- `carparks` (seed whitelist + SINPA mapping),
 `carpark_history`, `carpark_baseline`, `carpark_momentum`, `carpark_forecast`,
 `model_config`, `training_runs` -- plus the private `models` Storage bucket and seed rows
-for the 10 validated carparks. `carparks` and `training_runs` go beyond the design doc's
+for the 10 originally-validated carparks (T2, 2026-07-04; see below for the Apply/Verify
+steps as they stood then). `carparks` and `training_runs` go beyond the design doc's
 literal T2 list; the header comment in `schema.sql` records why (whitelist/FK integrity +
 the Observability section's promotion history).
+
+**Schema evolution since T2 (2026-07-08, coverage expansion):** two additive columns --
+`carparks.is_original_seed` (`true` for the 10 T2 rows, `false` for anything added later) and
+`model_config.first_promotion_at` -- together gate newly-onboarded carparks out of pooled
+training until the original 10's first-ever promotion happens. Live production now has 24
+`carparks` rows (10 original + 14 verified coverage-expansion candidates), not 10 -- the
+Apply/Verify steps below describe T2's original 10-row state and are kept as a historical
+record of that exit criteria, not a live row-count claim.
 
 RLS is enabled on every table with NO policies -- deny-by-default for `anon` and
 `authenticated`, with the default PostgREST grants revoked on top. Only the service-role

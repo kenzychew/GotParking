@@ -16,6 +16,9 @@ Full design doc, dedupe research, architecture, and review findings:
 - `api/` — Vercel Python (sin1): poller-triggered batch forecasts + the public cached read
   endpoint (the only public API surface)
 - `frontend/` — mobile-first PWA
+- `scripts/` — carpark coverage-expansion tooling (LTA-feed whitelist matching, human sign-off
+  gate, T1-style variance validation, seed-list regeneration) plus the T0 capacity load test;
+  see [Coverage Expansion](#coverage-expansion) below
 
 ## Status
 
@@ -30,27 +33,65 @@ verified live.
 poller is **live** at `https://gotparking-poller.kenzychew.workers.dev` (cron confirmed every
 5 minutes, all 6 secrets wired) and the site is **live** at
 `https://gstack-playground.vercel.app` (independently re-verified: `200` on `/`, and
-`/api/forecast` now also returns `200` — as of 2026-07-07 the poller/batch-predict pipeline
-has run long enough that `carpark_forecast` holds real rows for all 10 carparks, each still
-in the designed `cold_start` state (`forecast_lots: null`, real `live_lots` served) pending
-the cold-start threshold and the first weekly training run; `X-Vercel-Id: sin1::` continues to
-confirm the region pin). Both healthchecks.io dead-man's-switch checks exist — `gotparking-poller` is already `up`
-(receiving real pings); `gotparking-training` stays intentionally paused until
-`.github/workflows/train.yml` fires on its own weekly schedule and sends its first real ping.
-GitHub Actions and Vercel each have their full set of secrets/env vars wired. See
-`docs/provisioning-checklist.md` for the full trail, including two dashboard-vs-reality
-corrections found along the way (Cloudflare's workers.dev toggle location; Vercel's actual
-deploy blocker, below).
+`/api/forecast` now also returns `200` — the poller/batch-predict pipeline has run long enough
+that `carpark_forecast` holds real rows for all 24 carparks (see
+[Coverage Expansion](#coverage-expansion) below), each still in the designed `cold_start` state
+(`forecast_lots: null`, real `live_lots` served)
+pending the cold-start threshold and the first weekly training run; `X-Vercel-Id: sin1::`
+continues to confirm the region pin). Both healthchecks.io dead-man's-switch checks exist —
+`gotparking-poller` is already `up` (receiving real pings); `gotparking-training` stays
+intentionally paused until `.github/workflows/train.yml` fires on its own weekly schedule and
+sends its first real ping. GitHub Actions and Vercel each have their full set of secrets/env
+vars wired. See `docs/provisioning-checklist.md` for the full trail, including two
+dashboard-vs-reality corrections found along the way (Cloudflare's workers.dev toggle location;
+Vercel's actual deploy blocker, below).
 
-**All four implementation lanes are done and merged.** T3 (poller): `poller/`, 38/38 tests
-green. T4 (api): `api/`, 113/113 tests green, ruff + mypy clean. T6 (frontend): `frontend/`,
-70/70 tests green, production build clean (installable PWA, offline cache, Public Sans
-self-hosted). T5 (training): `training/`, 161/161 tests green, ruff + mypy clean —
-SGT/holiday logic is cross-checked against `api/`'s copy by a dedicated test
-(`training/tests/test_sg_time.py` loads `api/_lib/sg_time.py` directly and diffs both across
-a dense grid of instants), run manually via `uv run pytest` — `.github/workflows/train.yml`
-only runs the production training job itself, it does not run any lane's test suite. Test
-Requirements coverage: **49/49 planned paths (100%)** — see the design doc.
+## Coverage Expansion
+
+**2026-07-08: 10 → 24 carparks, first wave of a two-part plan.** A whitelist-matching pipeline
+(`scripts/recon_mall_whitelist.py` → `scripts/build_mall_whitelist.py`) fuzzy-matches the live
+LTA feed against data.gov.sg's mall dataset, gates every candidate behind a mandatory human
+sign-off (fuzzy-match and T1 variance validation are NOT orthogonal checks — a live run caught a
+real false positive, "Junction 8" matching "Junction 10" at 85.7% — see TODOS.md), then a
+6-hour variance-observation window per `analyze_variance.py`'s existing `MIN_MEANINGFUL_RANGE`
+threshold. Of 18 mall candidates found (500 LTA carparks × 357 mall-rates dataset rows), 14
+verified and are now live; 3 rejected for insufficient lot-count variance (Bt Panjang Plaza,
+Singapore Flyer, Concorde Hotel); 1 excluded (the Junction 8/10 false positive).
+`scripts/regen_seed_lists.py` (Approach C — a CI-generatable static-list regen, not a
+DB-driven poller; chosen after a Phase 0 recon found only 18 real candidates, too few to justify
+a new runtime dependency) regenerated `poller/src/carparks.ts` and
+`frontend/src/seed/seedCarparks.ts`; the poller and frontend have been redeployed. A new
+`carparks.is_original_seed` / `model_config.first_promotion_at` pair (`db/schema.sql`) gates
+newly-onboarded carparks out of pooled training until the original 10's first-ever promotion
+happens, so the expansion can't dilute that outcome. **Known gap:** `db/schema.sql`'s seed
+INSERTs still only cover the original 10 — the 14 new rows exist solely in production (applied
+as one-off SQL), not yet captured back into the repo (tracked in TODOS.md). Full plan +
+3-iteration adversarial review:
+`~/.gstack/projects/gstack-playground/ceo-plans/2026-07-07-carpark-coverage-expansion.md`.
+
+A second, larger wave (full ~500-carpark LTA feed, no fuzzy-matching needed) is planned but
+explicitly **capped to a first sub-wave of 50-100 and held pending real accuracy numbers** from
+this batch — an independent CEO review found that scaling carpark *count* before the model has
+produced one validated forecast optimizes a variable this project's actual audience (GovTech/OGP)
+doesn't judge (see TODOS.md's "Remaining ~400 LTA feed carparks" entry). Its T0 load-test gate
+already ran (`docs/t0-load-test-2026-07-08.md`): LightGBM inference cost is negligible
+(~0.055ms/carpark against a representative synthetic model); the dominant cost is one Supabase
+read (~480ms, flat regardless of carpark count thanks to a recent N+1 fix in
+`api/_lib/batch_logic.py`) — even 500 carparks on the `ml` path simultaneously extrapolates to
+~5% of Vercel Hobby's default timeout.
+
+**All four implementation lanes are done and merged**, plus a fifth (`scripts/`) added by the
+coverage-expansion work. T3 (poller): `poller/`, 39/39 tests green. T4 (api): `api/`, 116/116
+tests green, ruff + mypy clean. T6 (frontend): `frontend/`, 70/70 tests green, production build
+clean (installable PWA, offline cache, Public Sans self-hosted). T5 (training): `training/`,
+172/172 tests green, ruff + mypy clean — SGT/holiday logic is cross-checked against `api/`'s
+copy by a dedicated test (`training/tests/test_sg_time.py` loads `api/_lib/sg_time.py` directly
+and diffs both across a dense grid of instants), run manually via `uv run pytest` —
+`.github/workflows/train.yml` only runs the production training job itself, it does not run any
+lane's test suite. `scripts/`: 35/35 tests green (the whitelist-matching + seed-list-regen
+tooling), ruff + mypy clean. Test Requirements coverage: **49/49 planned paths (100%)** — see
+the design doc (the coverage-expansion work is tracked separately, outside that original
+requirements set — see its own plan/review artifacts linked above).
 
 Every lane was independently re-verified (tests re-run from a fresh `main` checkout, not
 just the build worktree) before merging. Two real gaps were found this way and handled
@@ -82,13 +123,16 @@ library path). `regions: ["sin1"]` stays top-level and held: live responses show
 `X-Vercel-Id: sin1::`.
 
 **Nothing is deferred anymore.** The app has moved past its initial "predictions temporarily
-unavailable" 503 — as of 2026-07-07, `/api/forecast` returns `200` for all 10 carparks in the
-designed `cold_start` state (real `live_lots`, `forecast_lots: null`) rather than an empty
-table. The only thing left before it shows real ML forecasts is data: the poller has been
-live only since 2026-07-05/06, so T5's training job (weekly, next fires on its own schedule)
-hasn't had ~2-3 weeks of history to train against yet — exactly the bootstrap window the
-design doc's Approach A always expected. The post-deploy verification checklist in the
-design doc's Observability section is the next thing worth running once that data exists.
+unavailable" 503 — `/api/forecast` returns `200` for all 24 carparks in the designed
+`cold_start` state (real `live_lots`, `forecast_lots: null`) rather than an empty table. The
+only thing left before it shows real ML forecasts is data: the original 10 have been polling
+since 2026-07-05/06 (the 14 coverage-expansion carparks since 2026-07-08), so T5's training job
+(weekly, next fires on its own schedule) hasn't had ~2-3 weeks of history to train against yet
+— exactly the bootstrap window the design doc's Approach A always expected. The
+training-eligibility gate (see [Coverage Expansion](#coverage-expansion) above) means the 14 new carparks won't pool
+into training at all until that first promotion happens, regardless of how much history they
+accumulate. The post-deploy verification checklist in the design doc's Observability section is
+the next thing worth running once that data exists.
 
 **QA: 2026-07-06, health score 98/100, zero bugs.** A full `/qa` browser pass against the
 live production site — search, carpark selection, no-results state, dark mode, Share, the

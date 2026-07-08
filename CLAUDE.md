@@ -67,7 +67,8 @@ here so they aren't silently dropped, but are NOT automated by /land-and-deploy.
 ### Custom deploy hooks
 - Pre-merge: run each lane's test suite before pushing —
   `(cd poller && npx vitest run)`, `(cd api && uv run pytest -q)`,
-  `(cd training && uv run pytest -q)`, `(cd frontend && npx vitest run)`
+  `(cd training && uv run pytest -q)`, `(cd frontend && npx vitest run)`,
+  `(cd scripts && uv run pytest -q)` (added 2026-07-08, coverage-expansion tooling)
 - Deploy trigger: automatic on push to `main` (Vercel only)
 - Deploy status: `npx vercel ls` (see Deploy status command above)
 - Health check: `GET {production-url}/api/forecast` (see above)
@@ -84,3 +85,10 @@ here so they aren't silently dropped, but are NOT automated by /land-and-deploy.
   sense — `.github/workflows/train.yml` runs on its own weekly schedule
   (`0 21 * * 6`) once pushed to `main`; there's nothing to health-check beyond
   the healthchecks.io training ping (Premise #8) and the `training_runs` table.
+- **GitHub Actions workflow_dispatch (`.github/workflows/regen-seed-lists.yml`,
+  added 2026-07-08):** manually triggered only (no schedule) — runs
+  `scripts/regen_seed_lists.py` and opens a PR via `peter-evans/create-pull-request`
+  if it produces a diff. The workflow's own inline comment flags real
+  uncertainty about whether this repo's Actions permissions are configured to
+  let it actually open a PR (vs. silently just pushing the branch) — verify
+  before relying on it unattended.
