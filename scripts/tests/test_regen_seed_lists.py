@@ -85,6 +85,16 @@ def test_sorted_entries_is_numeric_not_lexical() -> None:
     assert ids_in_order == ["2", "11", "100"]
 
 
+def test_sorted_entries_handles_alphanumeric_ids_without_crashing() -> None:
+    """Regression: LTA CarParkIDs are not all numeric -- the full-feed coverage-expansion
+    wave (2026-07-08) introduced alphanumeric, area-letter-prefixed IDs (e.g. "A0007"). A
+    bare int() sort key crashes on these; numeric IDs must still sort numerically among
+    themselves, with alphanumeric ones sorted after, alphabetically."""
+    combined = {"11": "Cineleisure", "A0007": "Angullia Park", "2": "Marina Square", "B0063": "Bukit Batok"}
+    ids_in_order = [carpark_id for carpark_id, _ in rsl.sorted_entries(combined)]
+    assert ids_in_order == ["2", "11", "A0007", "B0063"]
+
+
 def test_regenerate_matches_expected_fixtures(workdir: Path) -> None:
     """End-to-end: regenerate() output matches the hand-verified "after" fixtures exactly."""
     poller_ts = workdir / "carparks.ts"

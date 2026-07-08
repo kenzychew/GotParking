@@ -280,18 +280,27 @@ def build_combined_carparks(
 
 
 def sorted_entries(combined: dict[str, str]) -> list[tuple[str, str]]:
-    """Sort a combined id->name mapping numerically by carpark_id.
+    """Sort a combined id->name mapping numerically by carpark_id, alphanumeric IDs last.
 
     Matches both target files' existing convention (ascending numeric CarParkID order,
-    not lexical string order -- e.g. "2" before "11").
+    not lexical string order -- e.g. "2" before "11"). LTA CarParkIDs are not all
+    numeric -- the full-feed coverage-expansion wave (2026-07-08) introduced alphanumeric
+    IDs (e.g. "A0007", area-letter-prefixed, mostly HDB/URA off-street lots) that a bare
+    `int()` sort key would crash on. All-numeric IDs still sort numerically among
+    themselves (preserving the original convention exactly); any alphanumeric IDs sort
+    after them, in plain alphabetical order.
 
     Args:
         combined: id->name mapping.
 
     Returns:
-        List of (carpark_id, name) tuples in ascending numeric carpark_id order.
+        List of (carpark_id, name) tuples: numeric IDs first (ascending numeric order),
+        then alphanumeric IDs (ascending alphabetical order).
     """
-    return sorted(combined.items(), key=lambda pair: int(pair[0]))
+    return sorted(
+        combined.items(),
+        key=lambda pair: (0, int(pair[0])) if pair[0].isdigit() else (1, pair[0]),
+    )
 
 
 def render_poller_carparks_ts(original_text: str, combined: dict[str, str]) -> str:
