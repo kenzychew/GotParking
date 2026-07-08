@@ -149,27 +149,30 @@ is a genuine enhancement once more carparks exist.
 
 ### Fully generated seed-list pipeline (replace hand-maintained static files)
 
-**Status 2026-07-08:** the narrower version of this gap is now CLOSED — `SEED_CARPARKS`/
-`SEED_CARPARK_NAMES` are no longer hand-edited; `scripts/regen_seed_lists.py` has been run for
-real against the mall wave's 14 verified candidates (`poller/src/carparks.ts` and
-`frontend/src/seed/seedCarparks.ts` both carry generator-credited headers now). What remains is
-the BIGGER version below — removing hand-maintenance as a *concept* everywhere, not just this
-one file pair.
+**Status 2026-07-08:** both the TS-seed-list gap AND the schema-reproducibility gap are now
+CLOSED. `SEED_CARPARKS`/`SEED_CARPARK_NAMES` are no longer hand-edited —
+`scripts/regen_seed_lists.py` has been run for real against the mall wave's 14 verified
+candidates. `db/schema.sql` now also has a second seed INSERT block for the 14 (`is_original_seed
+=false`, `sinpa_index=null`), matching exactly what was applied to production — a fresh apply
+now correctly reproduces all 24 rows, not just the original 10. What remains is the BIGGER
+version below: removing hand-maintenance as a *concept* everywhere (both the TS files and
+`schema.sql` are still manually-updated-per-wave, not auto-synced from `carparks` at apply time
+or CI time), not just these two specific file-pairs having caught up for wave 1.
 
-**What:** Even with the regenerator in place, `carparks` (the DB table) still isn't the single
-source of truth end-to-end — `db/schema.sql`'s seed INSERTs only cover the original 10; the 14
-coverage-expansion rows exist solely in production (applied via one-off SQL from
-`build_mall_whitelist.py`'s output), never captured back into the repo. A fresh `schema.sql`
-apply reproduces 10 carparks, not the live 24 — a real reproducibility gap, not yet closed. A
-fully generated pipeline would resolve this too, not just the TS seed-list files.
+**What:** `carparks` (the DB table) is the intended single source of truth, but nothing
+auto-syncs `schema.sql`'s seed INSERTs or the TS seed-list files FROM it — each coverage
+wave requires a human/script to update both by hand (even though the update mechanism itself,
+`regen_seed_lists.py`, is now real and tested). A fully generated pipeline would remove the
+"remember to update N places" step entirely, not just make updating them fast.
 
 **Why:** Surfaced during the full-feed carpark-expansion `/autoplan` review — the Eng subagent
 flagged this as "a recurring unpaid debt this plan is about to compound a second time," having
 already gone unpaid once in the mall wave (before Approach C landed). The schema-reproducibility
-half of the gap was found independently during a post-ship `/document-release` audit.
+half of the gap was found independently during a post-ship `/document-release` audit, and closed
+the same day.
 
-**Context:** The narrower TS-seed-list gap is done; the schema-reproducibility gap and the full
-"remove hand-maintenance as a concept" version are what's left.
+**Context:** Both wave-1-specific gaps are done. What's left is generalizing so wave 2 (and
+every wave after) doesn't require remembering to touch `schema.sql` by hand again.
 
 **Effort:** L
 **Priority:** P3

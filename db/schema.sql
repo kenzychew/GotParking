@@ -229,6 +229,35 @@ insert into public.carparks (carpark_id, name, sinpa_index, is_original_seed) va
     ('50', 'VivoCity P2',    null, true)
 on conflict (carpark_id) do nothing;
 
+-- Coverage-expansion wave 1 (2026-07-08): 14 mall carparks verified via
+-- scripts/build_mall_whitelist.py's T1-style variance validation (18
+-- candidates found, 14 verified, 3 rejected for insufficient lot-count
+-- variance, 1 excluded as a confirmed fuzzy-match false positive -- see
+-- TODOS.md's "Expand to all/hundreds of SG carparks" entry for the full
+-- breakdown). None have a SINPA mapping (that was a one-time, T0-era
+-- exact-coordinate match against only the original 10) -> sinpa_index
+-- null for all. is_original_seed defaults to false, set explicitly here
+-- for clarity. Applied to production via this same INSERT shape on
+-- 2026-07-08 (scripts/build_mall_whitelist.py's render_sql_inserts); this
+-- block closes the reproducibility gap that left them un-captured in a
+-- fresh schema.sql apply until now.
+insert into public.carparks (carpark_id, name, sinpa_index, is_original_seed) values
+    ('5',  'Millenia Singapore',   null, false),
+    ('7',  'Orchard Point',        null, false),
+    ('8',  'The Heeren',           null, false),
+    ('9',  'Plaza Singapura',      null, false),
+    ('10', 'The Cathay',           null, false),
+    ('14', 'Wisma Atria',          null, false),
+    ('19', 'Harbourfront Centre',  null, false),
+    ('20', 'Far East Plaza',       null, false),
+    ('23', 'ION Orchard',          null, false),
+    ('27', 'Orchard Central',      null, false),
+    ('43', 'Westgate',             null, false),
+    ('53', 'IMM Building',         null, false),
+    ('63', 'Tampines Mall',        null, false),
+    ('65', 'Bedok Mall',           null, false)
+on conflict (carpark_id) do nothing;
+
 -- Singleton config row: no promoted model yet -> baseline-only serving.
 insert into public.model_config (singleton, active_model_version)
 values (true, null)

@@ -63,10 +63,10 @@ a new runtime dependency) regenerated `poller/src/carparks.ts` and
 `frontend/src/seed/seedCarparks.ts`; the poller and frontend have been redeployed. A new
 `carparks.is_original_seed` / `model_config.first_promotion_at` pair (`db/schema.sql`) gates
 newly-onboarded carparks out of pooled training until the original 10's first-ever promotion
-happens, so the expansion can't dilute that outcome. **Known gap:** `db/schema.sql`'s seed
-INSERTs still only cover the original 10 — the 14 new rows exist solely in production (applied
-as one-off SQL), not yet captured back into the repo (tracked in TODOS.md). Full plan +
-3-iteration adversarial review:
+happens, so the expansion can't dilute that outcome. `db/schema.sql`'s seed INSERTs now cover
+all 24 (a second block added the same day for the 14 new rows, matching what was applied to
+production) — a fresh apply reproduces the live state exactly. Full plan + 3-iteration
+adversarial review:
 `~/.gstack/projects/gstack-playground/ceo-plans/2026-07-07-carpark-coverage-expansion.md`.
 
 A second, larger wave (full ~500-carpark LTA feed, no fuzzy-matching needed) is planned but

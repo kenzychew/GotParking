@@ -14,10 +14,13 @@ the Observability section's promotion history).
 **Schema evolution since T2 (2026-07-08, coverage expansion):** two additive columns --
 `carparks.is_original_seed` (`true` for the 10 T2 rows, `false` for anything added later) and
 `model_config.first_promotion_at` -- together gate newly-onboarded carparks out of pooled
-training until the original 10's first-ever promotion happens. Live production now has 24
-`carparks` rows (10 original + 14 verified coverage-expansion candidates), not 10 -- the
-Apply/Verify steps below describe T2's original 10-row state and are kept as a historical
-record of that exit criteria, not a live row-count claim.
+training until the original 10's first-ever promotion happens. A second seed block (14 verified
+mall-wave carparks, `is_original_seed=false`) was added the same day, closing a brief
+reproducibility gap where a fresh `schema.sql` apply reproduced only the original 10 while
+production already had 24 -- a fresh apply today correctly seeds all 24. The **Verify (T2 exit
+criteria)** section below still describes T2's original 2026-07-04 checks against the 10-row
+state as they stood at that specific milestone -- read those row counts as historical, not as
+what you'll see from a fresh apply today.
 
 RLS is enabled on every table with NO policies -- deny-by-default for `anon` and
 `authenticated`, with the default PostgREST grants revoked on top. Only the service-role
@@ -28,8 +31,9 @@ Supabase directly; it reads the cached public forecast endpoint.
 
 1. Complete provisioning checklist Phase 2 (project in `ap-southeast-1`).
 2. Supabase dashboard -> SQL Editor -> paste all of `schema.sql` -> Run.
-3. Table Editor should show 7 tables; `carparks` has 10 rows; `model_config` has 1 row
-   with `active_model_version` null (baseline-only serving until the first promotion).
+3. Table Editor should show 7 tables; `carparks` has 24 rows (10 original seed + 14
+   coverage-expansion mall carparks, as of 2026-07-08); `model_config` has 1 row with
+   `active_model_version` null (baseline-only serving until the first promotion).
 
 Note: `schema.sql` also creates the private `models` bucket (section 9), so if you ran it
 before doing the checklist's manual bucket step, that step is already satisfied --
