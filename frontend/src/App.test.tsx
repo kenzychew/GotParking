@@ -121,7 +121,7 @@ describe("required test slice", () => {
     expect(await screen.findByText("~120 lots free in 20 min")).toBeInTheDocument();
   });
 
-  it('outside-seed-list search shows "not covered yet" + the 10 supported malls', async () => {
+  it('outside-seed-list search shows "not covered yet" + every supported mall', async () => {
     mockFetchAlwaysResolves(MOCK_FRESH_PAYLOAD);
     const user = userEvent.setup();
     render(<App />);
@@ -129,7 +129,9 @@ describe("required test slice", () => {
     await user.type(screen.getByLabelText("Search for a mall"), "Nonexistent Mall Name");
 
     expect(
-      await screen.findByText("No results - try one of the 10 supported malls:"),
+      await screen.findByText(
+        `No results - try one of the ${SEED_CARPARKS.length} supported malls:`,
+      ),
     ).toBeInTheDocument();
     for (const carpark of SEED_CARPARKS) {
       expect(screen.getByRole("button", { name: carpark.name })).toBeInTheDocument();
