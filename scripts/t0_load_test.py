@@ -43,7 +43,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "api"))
 from _lib.batch_logic import (  # noqa: E402
     _load_active_carparks,
     _load_history_stats,
-    _load_momentum,
 )
 from _lib.config import FORECAST_HORIZON_MINUTES  # noqa: E402
 from _lib.features import FEATURE_NAMES, build_feature_vector  # noqa: E402
@@ -96,7 +95,7 @@ def train_synthetic_booster(n_rows: int = 5000, num_trees: int = 200) -> lightgb
 
 def measure_regime_costs(
     db: SupabaseREST, booster: lightgbm.Booster, now: datetime
-) -> dict[str, RegimeTiming]:
+) -> tuple[dict[str, RegimeTiming], int]:
     """Time each serving state's per-carpark compute cost against real production data shapes.
 
     Args:
@@ -110,7 +109,6 @@ def measure_regime_costs(
     carparks = _load_active_carparks(db)
     carpark_ids = [c.carpark_id for c in carparks]
     history_stats = _load_history_stats(db, carpark_ids)
-    momentum = _load_momentum(db, carpark_ids)
 
     target = now + timedelta(minutes=FORECAST_HORIZON_MINUTES)
 

@@ -61,6 +61,7 @@ class CycleError extends Error {
 interface LtaRecord {
   CarParkID?: unknown;
   AvailableLots?: unknown;
+  LotType?: unknown;
 }
 
 async function fetchLtaSnapshot(env: Env): Promise<unknown[]> {
@@ -130,10 +131,18 @@ function parseLots(raw: unknown): number | null {
 }
 
 export function parseSeedRows(records: readonly unknown[], polledAtIso: string): HistoryInsertRow[] {
-  // First record wins per carpark: LTA lists one row per (CarParkID, LotType)
-  // and the seed malls report a single car LotType (verified in T1 -- exactly
-  // one sample per carpark per poll); the composite PK would drop a second
-  // row for the same cycle anyway.
+  // LTA lists one row per (CarParkID, LotType) -- most carparks report a single
+  // "C" (car) row, but ~18% of the full LTA feed also reports separate "Y"
+  // (motorcycle) and/or "H" (heavy vehicle) rows sharing the SAME CarParkID
+  // with a DIFFERENT AvailableLots (found live 2026-07-08 auditing the
+  // full-feed coverage-expansion wave -- e.g. carpark A0007 reports 0 lots on
+  // its "Y" row and 224 on its "C" row for the same poll). This product is a
+  // car-parking forecaster, so only the "C" row is ever the right one --
+  // taking "whichever record comes first in the feed" would silently pick a
+  // motorcycle/heavy-vehicle reading depending on LTA's arbitrary JSON
+  // ordering. Never true for the 10 original seed malls (verified in T1, all
+  // single-LotType), which is exactly why this went uncaught until the
+  // full-feed wave's candidate pool actually included multi-LotType carparks.
   const rows = new Map<string, HistoryInsertRow>();
   for (const record of records) {
     if (typeof record !== "object" || record === null) {
@@ -141,6 +150,9 @@ export function parseSeedRows(records: readonly unknown[], polledAtIso: string):
     }
     const carparkId = String((record as LtaRecord).CarParkID ?? "");
     if (!SEED_CARPARK_IDS.has(carparkId) || rows.has(carparkId)) {
+      continue;
+    }
+    if ((record as LtaRecord).LotType !== "C") {
       continue;
     }
     const lots = parseLots((record as LtaRecord).AvailableLots);

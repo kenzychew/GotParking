@@ -27,10 +27,11 @@ export function makeEnv(overrides: Partial<Env> = {}): Env {
 /** One plausible LTA record per seed carpark; override specific IDs' lot counts as needed. */
 export function fullLtaRecords(
   overrides: Readonly<Record<string, number>> = {},
-): Array<{ CarParkID: string; AvailableLots: number }> {
+): Array<{ CarParkID: string; AvailableLots: number; LotType: string }> {
   return SEED_CARPARK_ID_LIST.map((id, index) => ({
     CarParkID: id,
     AvailableLots: overrides[id] ?? 50 + index * 10,
+    LotType: "C",
   }));
 }
 

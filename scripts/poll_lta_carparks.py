@@ -92,6 +92,17 @@ def append_samples(
     write_header = not output_file.exists()
     timestamp = datetime.now(timezone.utc).isoformat()
 
+    # LTA lists one row per (CarParkID, LotType) -- ~18% of the full feed also reports
+    # separate "Y" (motorcycle) / "H" (heavy vehicle) rows sharing the SAME CarParkID with a
+    # DIFFERENT AvailableLots (found live 2026-07-08 auditing the full-feed coverage-expansion
+    # wave). Without this filter, a carpark with multiple LotType rows would get every one of
+    # them written as a separate sample under the same carpark_id -- silently mixing
+    # car/motorcycle/heavy-vehicle readings into one variance series and corrupting
+    # analyze_variance.py's max-min calculation. Only "C" (car) is ever correct for this
+    # product. Never triggered by the 10 original seed malls (verified in T1, all
+    # single-LotType), which is why this went uncaught until the full-feed wave's candidate
+    # pool actually included multi-LotType carparks.
+    already_written_this_poll: set[str] = set()
     written = 0
     with output_file.open("a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -99,9 +110,12 @@ def append_samples(
             writer.writerow(["timestamp_utc", "carpark_id", "development", "available_lots"])
         for record in records:
             carpark_id = str(record.get("CarParkID", ""))
-            if carpark_id not in ids:
+            if carpark_id not in ids or carpark_id in already_written_this_poll:
+                continue
+            if record.get("LotType") != "C":
                 continue
             writer.writerow([timestamp, carpark_id, ids[carpark_id], record.get("AvailableLots")])
+            already_written_this_poll.add(carpark_id)
             written += 1
     return written
 

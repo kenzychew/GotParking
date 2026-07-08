@@ -59,8 +59,8 @@ def summarize(by_development: dict[str, list[int]]) -> None:
     logger.info("%-20s %8s %8s %8s %10s %s", "Development", "samples", "min", "max", "range", "verdict")
     logger.info("-" * 80)
 
-    worth_forecasting = []
-    too_stable = []
+    worth_forecasting: list[str] = []
+    too_stable: list[str] = []
 
     for development, readings in sorted(by_development.items()):
         if len(readings) < 2:
