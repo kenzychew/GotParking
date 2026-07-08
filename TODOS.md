@@ -90,27 +90,134 @@ traffic (10 carparks, small user base), but worth checking before any traffic-dr
 
 **Context:** The model-caching design (Premise #9) already mitigates most of this — a warm
 instance only re-fetches on version change, not per-request — but cold-start storms during a
-traffic spike are a different failure mode.
+traffic spike are a different failure mode. **Cross-reference (2026-07-08):** the full-feed
+carpark-expansion plan's write-volume growth (18x at full ~500 scale, 2-4x even at its capped
+first wave of 50-100) is the first real trigger for this item's "10 carparks" scoping, not a
+hypothetical future one.
 
 **Effort:** S (a load test, not a code change, unless it fails)
 **Priority:** P3
 **Depends on:** MVP live and stable.
 
+### `carpark_history` retention/archival policy
+
+**What:** No TTL, partitioning, or cleanup trigger exists on `carpark_history` — at 5-minute
+polling it grows unbounded (288 rows/carpark/day). Needs a retention policy (archival job,
+partitioning, or a hard TTL) before write volume becomes a real storage/capacity problem.
+
+**Why:** Surfaced during the full-feed carpark-expansion `/autoplan` review's Grounding section
+— confirmed via `db/schema.sql` that no retention mechanism exists at all today. At the current
+~28 carparks this is ~242K rows/month; even the expansion plan's capped first wave (50-100
+carparks) is 2-4x that growth rate, and the deferred remaining ~400 would be ~18x.
+
+**Context:** Deferred at both the mall-wave and full-feed plans' scope, but the growth-rate math
+means this should not stay deferred indefinitely — see the trigger condition below.
+
+**Effort:** M (a scheduled archival job or partitioning strategy, not a one-line fix)
+**Priority:** P3
+**Trigger condition:** revisit once the carpark-expansion plan's first wave (50-100) starts
+accumulating real volume, or immediately if Supabase free-tier storage warnings appear.
+**Depends on:** None directly.
+
+### Supabase usage dashboard/alert
+
+**What:** No visibility into Supabase free-tier usage (row counts, storage, connection pool)
+anywhere in this project's tooling — limits are undocumented and unmonitored.
+
+**Why:** Surfaced during the full-feed carpark-expansion `/autoplan` review. Cheap observability
+that would surface capacity problems before they become production incidents, rather than after.
+
+**Context:** Not blocking any current work — the expansion plan's T0 load test and capped scope
+already de-risk the immediate capacity question; this is a longer-term observability gap.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None.
+
+### Categorized/filterable frontend browse (beyond search)
+
+**What:** Add a browse-by-area/category view to the frontend, not just search-by-name — useful
+once carpark count grows enough that "browse all supported malls" becomes a real use case.
+
+**Why:** Surfaced during the full-feed carpark-expansion `/autoplan` review's CEO cherry-pick
+scan. Search-with-a-cap (already in that plan's baseline scope) is sufficient for launch; this
+is a genuine enhancement once more carparks exist.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** More carparks onboarded (the expansion plan's first wave or later).
+
+### Fully generated seed-list pipeline (replace hand-maintained static files)
+
+**What:** `SEED_CARPARKS`/`SEED_CARPARK_NAMES` are still hand-maintained TypeScript literals —
+the mall wave's 16 verified candidates were never actually wired into them (Approach C's
+regeneration script exists but hasn't been exercised against real verified output yet). A fully
+generated pipeline would make `carparks` (the DB table) the only source of truth end-to-end.
+
+**Why:** Surfaced during the full-feed carpark-expansion `/autoplan` review — the Eng subagent
+flagged this as "a recurring unpaid debt this plan is about to compound a second time," having
+already gone unpaid once in the mall wave.
+
+**Context:** The full-feed plan's baseline scope includes making Approach C's regeneration
+script actually work for its first wave (see that plan's Implementation Tasks) — this TODO is
+the bigger, generalized version (removing hand-maintenance entirely, not just running the
+existing generator once more).
+
+**Effort:** L
+**Priority:** P3
+**Depends on:** The carpark-expansion plan's first wave proving the direct-onboard + regen
+pattern works end-to-end.
+
+### Remaining ~400 LTA feed carparks (held pending accuracy validation)
+
+**What:** The full-feed carpark-expansion plan was capped at CEO review to a first wave of
+50-100 carparks. The remaining ~400 (the rest of the LTA `CarParkAvailabilityv2` feed, mostly
+HDB) are explicitly deferred, not rejected.
+
+**Why:** An independent CEO review flagged that scaling carpark COUNT 18x before the model has
+produced a single validated forecast (all 10 seed carparks are still `cold_start`) optimizes a
+variable a technical evaluator (GovTech/OGP, per this project's own stated purpose) doesn't
+actually judge — coverage breadth isn't the differentiator, forecast accuracy is. The user
+agreed and capped scope rather than proceeding with the full feed or pausing entirely.
+
+**Context:** Full reasoning in
+`~/.gstack/projects/gstack-playground/kenzy-main-plan-20260707-231353.md`'s CEO Dual-Voice
+Review section and Strategic Gate resolution.
+
+**Trigger condition (not just "someday"):** revisit once the existing 10 seed + 16 mall carparks
+have produced real, benchmarked accuracy numbers (forecast vs. actual, vs. historical-average
+and persistence baselines) from a completed first training promotion.
+
+**Effort:** L (per remaining batch, same pattern as the first wave)
+**Priority:** P3
+**Depends on:** First training promotion happening and producing measurable accuracy results.
+
 ### Revisit rate-limiting approach for SG mobile/CGNAT traffic
 
-**What:** The current plan uses IP-based rate limiting, which can false-positive-block
-legitimate users behind carrier-grade NAT (common for SG mobile carriers) while barely
-slowing a real abuser spoofing IPs.
+**Status 2026-07-08 (corrected phrasing):** the original wording here ("the current plan uses
+IP-based rate limiting") described the design doc's intent, not anything actually implemented —
+`grep` across `api/`, `poller/`, `frontend/`, `vercel.json` finds zero rate-limiting/throttle
+implementation today. Corrected so this entry doesn't read as a shipped mitigation.
+
+**What:** No rate limiting is implemented today. If/when it is, IP-based limiting can
+false-positive-block legitimate users behind carrier-grade NAT (common for SG mobile carriers)
+while barely slowing a real abuser spoofing IPs — worth designing around from the start rather
+than retrofitting.
 
 **Why:** Surfaced during `/autoplan` Eng review. Not urgent for MVP scale/audience, but a
 known weakness worth revisiting if abuse becomes real or the user base grows.
 
 **Context:** Alternatives worth considering later: per-session tokens, request signing, or
-Vercel's more sophisticated bot-detection tiers (paid).
+Vercel's more sophisticated bot-detection tiers (paid). **Cross-reference (2026-07-08):** the
+full-feed carpark-expansion plan (`~/.gstack/projects/gstack-playground/kenzy-main-plan-20260707-231353.md`)
+is the first real trigger for revisiting this item's "10 carparks, small user base" scoping —
+even its capped first wave (50-100 carparks) meaningfully changes write volume and public-read
+traffic patterns versus the assumption this item was originally scoped against.
 
 **Effort:** S
 **Priority:** P4
-**Depends on:** Evidence of actual abuse, or MVP traffic growing enough to matter.
+**Depends on:** Evidence of actual abuse, or MVP traffic growing enough to matter -- or the
+carpark-expansion plan's first wave shipping, whichever comes first.
 
 ### Revisit Cloudflare D1 as a Supabase replacement
 
