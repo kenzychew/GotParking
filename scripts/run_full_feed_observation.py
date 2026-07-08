@@ -102,9 +102,17 @@ def main() -> None:
             "proceed. This must never happen; investigate before running again."
         )
 
+    # NOT len(signed): on an idempotent re-run (e.g. after a crash before the poll loop
+    # started), sign_off_full_feed_candidates correctly signs off zero NEW entries, but the
+    # observation window still needs to run against every entry ALREADY signed off from a
+    # prior invocation -- eligible_count reflects what advance_signed_off_entries will
+    # actually observe, not just this call's own sign-off delta.
+    eligible_count = sum(
+        1 for e in coverage_map["candidates"] if e["signed_off"] and e["state"] == STATE_MATCHED
+    )
     logger.info(
         "Starting observation window: %d carparks, %d-minute interval, %.1f hours, output=%s",
-        len(signed),
+        eligible_count,
         args.interval_minutes,
         args.duration_hours,
         args.poll_output_file,
