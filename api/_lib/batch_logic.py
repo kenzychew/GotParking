@@ -33,6 +33,7 @@ from _lib.config import (
     FAIL_REASON_MODEL_ARTIFACT_MISSING,
     FAIL_REASON_SUPABASE_UNAVAILABLE,
     FORECAST_HORIZON_MINUTES,
+    HISTORY_STATS_LOOKBACK_DAYS,
     MODEL_STORAGE_BUCKET,
     MOMENTUM_FRESHNESS_MINUTES,
 )
@@ -204,7 +205,9 @@ def _load_active_model_version(db: SupabaseClient) -> str | None:
     return result.rows[0].get("active_model_version")
 
 
-def _load_history_stats(db: SupabaseClient, carpark_ids: list[str]) -> dict[str, HistoryStats]:
+def _load_history_stats(
+    db: SupabaseClient, carpark_ids: list[str], now: datetime
+) -> dict[str, HistoryStats]:
     """Fetch (first_polled_at, sample_count, capacity, live_lots) per carpark.
 
     Issues exactly one `select_all` call against `carpark_history` for
@@ -218,14 +221,35 @@ def _load_history_stats(db: SupabaseClient, carpark_ids: list[str]) -> dict[str,
     `carpark_id,polled_at,available_lots` select for all requested
     carparks is well-supported. The four per-carpark stats are then
     derived in Python by grouping the returned rows by carpark_id and
-    scanning each group in polled_at order: the earliest row gives
-    first_polled_at, the row count gives sample_count, the latest row's
-    available_lots gives live_lots, and the max available_lots across the
-    group gives capacity.
+    scanning each group in polled_at order: the earliest IN-WINDOW row
+    gives first_polled_at, the row count gives sample_count, the latest
+    row's available_lots gives live_lots, and the max available_lots
+    across the group gives capacity.
+
+    The query is also bounded to the last HISTORY_STATS_LOOKBACK_DAYS
+    (`polled_at=gte.<cutoff>`) instead of a carpark's entire lifetime
+    history (found live 2026-07-09: at 268 carparks and ~14k
+    `carpark_history` rows, the unbounded version was already forcing 16
+    paginated requests every 5-minute cycle, for a table that never stops
+    growing). This is safe for `_is_cold_start`'s purposes specifically:
+    that check only needs to know whether the earliest sample is older
+    than COLD_START_MIN_AGE_HOURS, not the TRUE all-time-earliest
+    timestamp. Since HISTORY_STATS_LOOKBACK_DAYS is set comfortably above
+    that threshold (see config.py's comment), one of two things is always
+    true -- either the carpark's true first-ever sample is WITHIN the
+    window (this function reports it exactly, no distortion), or it's
+    OLDER than the window (this function reports a later-than-true
+    first_polled_at, but one that's still older than the threshold, so
+    the cold-start classification outcome is identical either way).
+    capacity/sample_count become bounded-window values rather than
+    all-time ones -- a deliberate, more-representative-of-current-state
+    narrowing, not an oversight (a stale all-time max from before a
+    carpark's capacity changed is not obviously more "correct").
 
     Args:
         db: Supabase client.
         carpark_ids: Active carpark IDs to load stats for.
+        now: The current instant, used to compute the lookback cutoff.
 
     Returns:
         A dict with one entry per requested carpark_id. A carpark_id with
@@ -243,12 +267,14 @@ def _load_history_stats(db: SupabaseClient, carpark_ids: list[str]) -> dict[str,
     if not carpark_ids:
         return stats
 
+    cutoff = now - timedelta(days=HISTORY_STATS_LOOKBACK_DAYS)
     ids = ",".join(carpark_ids)
     rows = db.select_all(
         "carpark_history",
         params={
             "select": "carpark_id,polled_at,available_lots",
             "carpark_id": f"in.({ids})",
+            "polled_at": f"gte.{cutoff.isoformat()}",
             "order": "carpark_id.asc,polled_at.asc",
         },
     )
@@ -406,7 +432,7 @@ def run_batch_predict(deps: BatchDeps) -> BatchResult:
         carparks = _load_active_carparks(deps.db)
         carpark_ids = [c.carpark_id for c in carparks]
         active_version = _load_active_model_version(deps.db)
-        history_stats = _load_history_stats(deps.db, carpark_ids)
+        history_stats = _load_history_stats(deps.db, carpark_ids, now)
         momentum = _load_momentum(deps.db, carpark_ids)
         baseline = _load_baseline(deps.db, carpark_ids)
     except SupabaseUnavailableError as exc:

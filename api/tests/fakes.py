@@ -19,7 +19,7 @@ from _lib.supabase_rest import SelectResult, SupabaseUnavailableError
 
 
 def _matches_filter(row: dict[str, Any], key: str, value: str) -> bool:
-    """Interpret one PostgREST-style filter (`eq.`/`in.`) against a row."""
+    """Interpret one PostgREST-style filter (`eq.`/`in.`/`gte.`/`lte.`) against a row."""
     if value.startswith("eq."):
         target = value[len("eq."):]
         row_value = row.get(key)
@@ -30,6 +30,21 @@ def _matches_filter(row: dict[str, Any], key: str, value: str) -> bool:
         inner = value[len("in."):].strip("()")
         allowed = set(inner.split(",")) if inner else set()
         return str(row.get(key)) in allowed
+    if value.startswith("gte.") or value.startswith("lte."):
+        op, target = value[:3], value[4:]
+        row_value = row.get(key)
+        if row_value is None:
+            return False
+        # Both sides are datetimes in every current caller (polled_at
+        # comparisons) -- parse the target the same way the real client
+        # does, so a naive-vs-aware mismatch fails loudly in tests too.
+        from _lib.supabase_rest import parse_timestamp
+
+        target_dt = parse_timestamp(target)
+        row_dt = parse_timestamp(row_value) if isinstance(row_value, str) else row_value
+        if op == "gte":
+            return bool(row_dt >= target_dt)
+        return bool(row_dt <= target_dt)
     raise NotImplementedError(f"FakeSupabaseDB: unsupported filter {key}={value!r}")
 
 

@@ -29,6 +29,7 @@ from _lib.batch_logic import (
     handle_batch_predict,
     run_batch_predict,
 )
+from _lib.config import COLD_START_MIN_AGE_HOURS, HISTORY_STATS_LOOKBACK_DAYS
 from _lib.model_cache import ModelCache
 from tests.fakes import FakeSupabaseDB, RecordingFailPing, make_clock, make_history_rows
 
@@ -643,12 +644,20 @@ class TestLoadHistoryStats:
     These tests target that function directly rather than through
     `run_batch_predict`, so the request-count reduction is asserted, not
     just incidentally true.
+
+    T6b (2026-07-09): the read is now also bounded to
+    HISTORY_STATS_LOOKBACK_DAYS instead of a carpark's entire lifetime
+    history -- see batch_logic._load_history_stats's docstring for the
+    correctness argument. Test data below stays within that window
+    (HISTORY_STATS_LOOKBACK_DAYS=7) so these three tests' expectations are
+    unaffected by the bound; TestLoadHistoryStatsTimeBound below tests the
+    bound itself.
     """
 
     def test_one_select_all_call_computes_correct_stats_for_all_carparks(self) -> None:
         history: list[dict[str, object]] = []
         history += make_history_rows(
-            "1", 5, NOW - timedelta(days=10), NOW - timedelta(minutes=5),
+            "1", 5, NOW - timedelta(days=4), NOW - timedelta(minutes=5),
             capacity=50, live_lots=42,
         )
         history += make_history_rows(
@@ -661,7 +670,7 @@ class TestLoadHistoryStats:
         )
         db = FakeSupabaseDB(tables={"carpark_history": history})
 
-        stats = _load_history_stats(db, ["1", "2", "3"])
+        stats = _load_history_stats(db, ["1", "2", "3"], NOW)
 
         # Exactly ONE request total was made against carpark_history -- not
         # three-per-carpark (9 requests for 3 carparks under the old
@@ -673,7 +682,7 @@ class TestLoadHistoryStats:
         assert params["carpark_id"] == "in.(1,2,3)"
 
         assert stats["1"] == HistoryStats(
-            first_polled_at=NOW - timedelta(days=10),
+            first_polled_at=NOW - timedelta(days=4),
             sample_count=5,
             capacity=50,
             live_lots=42,
@@ -693,12 +702,12 @@ class TestLoadHistoryStats:
 
     def test_carpark_with_no_history_rows_still_gets_safe_default_entry(self) -> None:
         history = make_history_rows(
-            "1", 5, NOW - timedelta(days=10), NOW - timedelta(minutes=5),
+            "1", 5, NOW - timedelta(days=4), NOW - timedelta(minutes=5),
             capacity=50, live_lots=42,
         )
         db = FakeSupabaseDB(tables={"carpark_history": history})
 
-        stats = _load_history_stats(db, ["1", "99"])
+        stats = _load_history_stats(db, ["1", "99"], NOW)
 
         # "99" is absent from carpark_history entirely but must not simply
         # disappear from the returned dict -- _is_cold_start depends on
@@ -711,7 +720,63 @@ class TestLoadHistoryStats:
     def test_no_carpark_ids_returns_empty_dict_and_makes_no_call(self) -> None:
         db = FakeSupabaseDB(tables={"carpark_history": []})
 
-        stats = _load_history_stats(db, [])
+        stats = _load_history_stats(db, [], NOW)
 
         assert stats == {}
         assert db.select_all_calls == []
+
+
+class TestLoadHistoryStatsTimeBound:
+    """T6b (2026-07-09): regression tests for the HISTORY_STATS_LOOKBACK_DAYS
+    bound -- the actual fix for the unbounded full-table-scan egress issue
+    found live (14,013 rows, 16 paginated requests per 5-minute cycle,
+    growing forever)."""
+
+    def test_query_includes_a_polled_at_gte_cutoff(self) -> None:
+        db = FakeSupabaseDB(tables={"carpark_history": []})
+
+        _load_history_stats(db, ["1"], NOW)
+
+        table, params = db.select_all_calls[0]
+        assert table == "carpark_history"
+        expected_cutoff = (NOW - timedelta(days=HISTORY_STATS_LOOKBACK_DAYS)).isoformat()
+        assert params["polled_at"] == f"gte.{expected_cutoff}"
+
+    def test_rows_older_than_the_window_are_excluded_from_the_aggregate(self) -> None:
+        # 10 rows spanning 10 days ago -> 5 minutes ago; only the ones within
+        # the last HISTORY_STATS_LOOKBACK_DAYS (7) should be counted.
+        history = make_history_rows(
+            "1", 10, NOW - timedelta(days=10), NOW - timedelta(minutes=5),
+            capacity=50, live_lots=42,
+        )
+        db = FakeSupabaseDB(tables={"carpark_history": history})
+
+        stats = _load_history_stats(db, ["1"], NOW)
+
+        # first_polled_at reflects the earliest IN-WINDOW row, not the true
+        # (10-days-ago) earliest-ever row -- the deliberate, documented
+        # narrowing this fix makes.
+        assert stats["1"].first_polled_at is not None
+        assert stats["1"].first_polled_at >= NOW - timedelta(days=HISTORY_STATS_LOOKBACK_DAYS)
+        assert stats["1"].sample_count < 10
+
+    def test_a_carpark_whose_true_first_poll_predates_the_window_still_clears_cold_start(
+        self,
+    ) -> None:
+        """The correctness argument from the docstring, exercised directly:
+        a carpark polling since 30 days ago (its true first-ever sample is
+        WAY outside the 7-day window) must still classify as having an
+        old-enough first_polled_at for _is_cold_start's >=72h check --
+        the bounded window can only make a carpark look YOUNGER than it
+        truly is, never confuse an old carpark for a fresh one."""
+        history = make_history_rows(
+            "1", 20, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
+            capacity=50, live_lots=42,
+        )
+        db = FakeSupabaseDB(tables={"carpark_history": history})
+
+        stats = _load_history_stats(db, ["1"], NOW)
+
+        assert stats["1"].first_polled_at is not None
+        age_hours = (NOW - stats["1"].first_polled_at).total_seconds() / 3600
+        assert age_hours >= COLD_START_MIN_AGE_HOURS  # still correctly "old enough"

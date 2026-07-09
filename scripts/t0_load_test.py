@@ -108,7 +108,7 @@ def measure_regime_costs(
     """
     carparks = _load_active_carparks(db)
     carpark_ids = [c.carpark_id for c in carparks]
-    history_stats = _load_history_stats(db, carpark_ids)
+    history_stats = _load_history_stats(db, carpark_ids, now)
 
     target = now + timedelta(minutes=FORECAST_HORIZON_MINUTES)
 

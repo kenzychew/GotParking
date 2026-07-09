@@ -23,6 +23,20 @@ FORECAST_HORIZON_MINUTES = 20
 COLD_START_MIN_AGE_HOURS = 72
 COLD_START_MIN_SAMPLES = 10
 
+#: `_load_history_stats` bounds its `carpark_history` read to this many days
+#: instead of fetching a carpark's entire lifetime history every cycle
+#: (found live 2026-07-09: at 268 carparks and growing, this was already
+#: forcing 16 paginated requests per batch_predict cycle, every 5 minutes,
+#: for a table that never stops growing -- a real, worsening egress cost).
+#: Must stay comfortably above COLD_START_MIN_AGE_HOURS (72h = 3 days): the
+#: cold-start check only needs to know whether the earliest sample is older
+#: than that threshold, not the TRUE all-time-earliest timestamp -- once a
+#: carpark's oldest in-window sample already clears 72h, the classification
+#: outcome is identical whether or not older rows exist outside the window.
+#: 7 days gives 4 days of margin plus a stable multi-day capacity/
+#: sample-count estimate.
+HISTORY_STATS_LOOKBACK_DAYS = 7
+
 #: A `carpark_momentum` row older than this is treated as missing (Premise
 #: #11, amended D5) -- that carpark is served via the baseline path this
 #: cycle instead of feeding stale rate-of-change inputs to the model.
