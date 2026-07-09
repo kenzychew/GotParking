@@ -122,6 +122,11 @@ describe("required test slice", () => {
   });
 
   it('outside-seed-list search shows "not covered yet" + every supported mall', async () => {
+    // Coverage-map size has grown past the original mall-only wave (268 as of the full-feed
+    // expansion wave, 2026-07-09) -- one getByRole query per carpark (268 individual
+    // accessibility-tree traversals) timed out at this scale. Query the DOM once via
+    // getAllByRole and diff the resulting name set instead: same assertion coverage
+    // (every SEED_CARPARKS entry has a button), O(n) not O(n^2).
     mockFetchAlwaysResolves(MOCK_FRESH_PAYLOAD);
     const user = userEvent.setup();
     render(<App />);
@@ -133,8 +138,11 @@ describe("required test slice", () => {
         `No results - try one of the ${SEED_CARPARKS.length} supported malls:`,
       ),
     ).toBeInTheDocument();
+    const renderedNames = new Set(
+      screen.getAllByRole("button").map((button) => button.textContent),
+    );
     for (const carpark of SEED_CARPARKS) {
-      expect(screen.getByRole("button", { name: carpark.name })).toBeInTheDocument();
+      expect(renderedNames.has(carpark.name)).toBe(true);
     }
   });
 
