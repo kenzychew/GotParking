@@ -15,7 +15,11 @@ script -- this script only *consumes* it):
     {
       "candidates": [
         {
-          "carpark_id": "64",           # required -- LTA CarParkID, digits-only string
+          "carpark_id": "64",           # required -- LTA CarParkID. Usually digits-only, but
+                                         # not always: the full-feed coverage-expansion wave
+                                         # (2026-07-09) introduced alphanumeric, area-letter-
+                                         # prefixed IDs (e.g. "A0007") -- any non-empty
+                                         # alphanumeric string is accepted.
           "name": "Junction 8",         # required -- display name
           "state": "verified",          # required -- one of the plan's state-machine values:
                                          # "matched" | "observing" | "verified" | "rejected" |
@@ -82,7 +86,10 @@ _FRONTEND_ARRAY_BLOCK_RE = re.compile(
 
 # One "id": "name" pair per line inside the SEED_CARPARK_NAMES block (mall names in this
 # dataset never contain literal double quotes, so a simple non-greedy match is sufficient).
-_NAME_ENTRY_RE = re.compile(r'^\s*"(\d+)":\s*"([^"]*)",?\s*$', re.MULTILINE)
+# The id group matches any non-empty run of word characters, not just digits -- LTA
+# CarParkIDs include alphanumeric, area-letter-prefixed IDs (e.g. "A0007") since the
+# full-feed coverage-expansion wave (2026-07-09).
+_NAME_ENTRY_RE = re.compile(r'^\s*"(\w+)":\s*"([^"]*)",?\s*$', re.MULTILINE)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -97,7 +104,8 @@ class VerifiedCarpark:
     """One "verified" candidate pulled from the coverage-map JSON.
 
     Attributes:
-        carpark_id: LTA CarParkID (digits-only string).
+        carpark_id: LTA CarParkID (non-empty alphanumeric string -- usually digits-only, but
+            not always; see module docstring).
         name: Display name.
     """
 
@@ -211,10 +219,11 @@ def load_verified_candidates(coverage_map_path: Path) -> list[VerifiedCarpark]:
                 f"{coverage_map_path}: candidates[{index}] is missing a valid non-empty "
                 f"\"carpark_id\" string (got {carpark_id!r})."
             )
-        if not carpark_id.isdigit():
+        if not carpark_id.isalnum():
             raise SeedListRegenError(
-                f"{coverage_map_path}: candidates[{index}].carpark_id must be digits-only "
-                f"(LTA CarParkID), got {carpark_id!r}."
+                f"{coverage_map_path}: candidates[{index}].carpark_id must be a non-empty "
+                f"alphanumeric LTA CarParkID (digits-only, or area-letter-prefixed like "
+                f"'A0007'), got {carpark_id!r}."
             )
         if not isinstance(name, str) or not name:
             raise SeedListRegenError(

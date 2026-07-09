@@ -43,6 +43,39 @@ def test_load_verified_candidates_filters_by_state() -> None:
     assert ids == {"100", "205"}
 
 
+def test_load_verified_candidates_accepts_alphanumeric_carpark_id(tmp_path: Path) -> None:
+    """Regression: LTA CarParkIDs are not all numeric (e.g. "A0007", area-letter-prefixed,
+    introduced by the full-feed coverage-expansion wave 2026-07-09) -- these must be
+    accepted, not rejected as invalid."""
+    import json
+
+    coverage_map = tmp_path / "coverage_map.json"
+    coverage_map.write_text(
+        json.dumps(
+            {"candidates": [{"carpark_id": "A0007", "name": "Angullia Park", "state": "verified"}]}
+        ),
+        encoding="utf-8",
+    )
+    verified = rsl.load_verified_candidates(coverage_map)
+    assert [c.carpark_id for c in verified] == ["A0007"]
+
+
+def test_load_verified_candidates_rejects_non_alphanumeric_carpark_id(tmp_path: Path) -> None:
+    """A carpark_id with punctuation/whitespace is genuinely malformed, not a valid LTA ID
+    shape -- must still hard-fail."""
+    import json
+
+    coverage_map = tmp_path / "coverage_map.json"
+    coverage_map.write_text(
+        json.dumps(
+            {"candidates": [{"carpark_id": "64!", "name": "Bad ID", "state": "verified"}]}
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(rsl.SeedListRegenError, match="alphanumeric"):
+        rsl.load_verified_candidates(coverage_map)
+
+
 def test_load_verified_candidates_missing_file_hard_fails() -> None:
     """A nonexistent coverage-map path raises a clear SeedListRegenError."""
     with pytest.raises(rsl.SeedListRegenError, match="not found"):
@@ -109,6 +142,40 @@ def test_regenerate_matches_expected_fixtures(workdir: Path) -> None:
 
     assert poller_ts.read_text(encoding="utf-8") == expected_poller
     assert frontend_ts.read_text(encoding="utf-8") == expected_frontend
+
+
+def test_regenerate_round_trips_an_alphanumeric_carpark_id(tmp_path: Path, workdir: Path) -> None:
+    """Regression: end-to-end, an alphanumeric-ID candidate (e.g. "A0007") is written into
+    poller/src/carparks.ts by one regenerate() call, then correctly RE-PARSED back out by
+    parse_existing_carparks on a second call -- the exact round-trip that would have
+    silently dropped or crashed on this entry before both _NAME_ENTRY_RE and the
+    isalnum() validation were widened past digits-only."""
+    import json
+
+    poller_ts = workdir / "carparks.ts"
+    frontend_ts = workdir / "seedCarparks.ts"
+
+    coverage_map = tmp_path / "coverage_map.json"
+    coverage_map.write_text(
+        json.dumps(
+            {"candidates": [{"carpark_id": "A0007", "name": "Angullia Park", "state": "verified"}]}
+        ),
+        encoding="utf-8",
+    )
+    rsl.regenerate(coverage_map, poller_ts, frontend_ts)
+
+    existing_after_first_run = rsl.parse_existing_carparks(poller_ts.read_text(encoding="utf-8"))
+    assert existing_after_first_run["A0007"] == "Angullia Park"
+
+    # Second run with an EMPTY coverage map -- re-parses the now-alphanumeric-containing
+    # file as the "existing" set and must reproduce it unchanged (true idempotency check).
+    empty_coverage_map = tmp_path / "empty_coverage_map.json"
+    empty_coverage_map.write_text(json.dumps({"candidates": []}), encoding="utf-8")
+    rsl.regenerate(empty_coverage_map, poller_ts, frontend_ts)
+
+    existing_after_second_run = rsl.parse_existing_carparks(poller_ts.read_text(encoding="utf-8"))
+    assert existing_after_second_run["A0007"] == "Angullia Park"
+    assert existing_after_second_run == existing_after_first_run
 
 
 def test_regenerate_preserves_helper_functions_verbatim(workdir: Path) -> None:
