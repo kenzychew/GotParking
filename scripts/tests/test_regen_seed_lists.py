@@ -104,11 +104,25 @@ def test_parse_existing_carparks_reads_all_ten(workdir: Path) -> None:
 
 
 def test_build_combined_carparks_conflict_hard_fails() -> None:
-    """A verified candidate whose carpark_id already exists in the seed list is rejected."""
+    """A verified candidate whose carpark_id already exists under a DIFFERENT name is
+    rejected -- a genuine conflict."""
     existing = {"1": "Suntec City"}
     verified = [rsl.VerifiedCarpark(carpark_id="1", name="Suntec City (dup)")]
-    with pytest.raises(rsl.SeedListRegenError, match="already exists"):
+    with pytest.raises(rsl.SeedListRegenError, match="DIFFERENT name"):
         rsl.build_combined_carparks(existing, verified)
+
+
+def test_build_combined_carparks_same_name_already_applied_is_a_noop() -> None:
+    """Regression: a verified candidate whose carpark_id already exists with the SAME name
+    is a harmless no-op, not an error. The coverage map accumulates every wave's "verified"
+    entries -- a second wave's regen run legitimately re-sees the first wave's
+    already-applied carparks (2026-07-09: this exact scenario tripped the pre-fix hard-fail
+    on the full-feed wave's first real regeneration attempt, since the mall wave's 14
+    carparks were already in poller/src/carparks.ts from an earlier run)."""
+    existing = {"5": "Millenia Singapore"}
+    verified = [rsl.VerifiedCarpark(carpark_id="5", name="Millenia Singapore")]
+    combined = rsl.build_combined_carparks(existing, verified)
+    assert combined == {"5": "Millenia Singapore"}
 
 
 def test_sorted_entries_is_numeric_not_lexical() -> None:
@@ -233,13 +247,15 @@ def test_regenerate_missing_coverage_map_writes_nothing(workdir: Path) -> None:
 
 
 def test_regenerate_conflicting_candidate_writes_nothing(workdir: Path) -> None:
-    """A verified candidate that collides with an existing seed id aborts before writing."""
+    """A verified candidate that collides with an existing seed id under a DIFFERENT name
+    aborts before writing (a same-name collision is a harmless no-op -- see
+    test_build_combined_carparks_same_name_already_applied_is_a_noop)."""
     poller_ts = workdir / "carparks.ts"
     frontend_ts = workdir / "seedCarparks.ts"
     poller_before = poller_ts.read_text(encoding="utf-8")
     frontend_before = frontend_ts.read_text(encoding="utf-8")
 
-    with pytest.raises(rsl.SeedListRegenError, match="already exists"):
+    with pytest.raises(rsl.SeedListRegenError, match="DIFFERENT name"):
         rsl.regenerate(FIXTURES_DIR / "coverage_map_conflict.json", poller_ts, frontend_ts)
 
     assert poller_ts.read_text(encoding="utf-8") == poller_before

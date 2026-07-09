@@ -257,23 +257,28 @@ def build_combined_carparks(
 
     Raises:
         SeedListRegenError: If a verified candidate's carpark_id already exists in the
-            current seed list (per the coverage-expansion plan, existing seed carparks are
-            excluded from the candidate-matching pipeline entirely and should never
-            re-appear as "verified"), or if two verified candidates share a carpark_id with
-            conflicting names.
+            current seed list under a DIFFERENT name (a genuine conflict worth surfacing),
+            or if two verified candidates share a carpark_id with conflicting names. A
+            verified candidate whose carpark_id already exists with the SAME name is a
+            harmless no-op, not an error -- the coverage map accumulates "verified" entries
+            across every wave that has ever run (2026-07-09: the full-feed wave's coverage
+            map still carries the mall wave's 14 already-applied entries alongside its own
+            244 new ones), so re-seeing a prior wave's already-applied carpark here is
+            expected, not a sign of the candidate re-entering the state machine.
     """
     combined = dict(existing)
     seen_verified: dict[str, str] = {}
 
     for candidate in verified:
         if candidate.carpark_id in existing:
-            raise SeedListRegenError(
-                f"Verified candidate carpark_id={candidate.carpark_id!r} "
-                f"({candidate.name!r}) already exists in the current seed list "
-                f"({existing[candidate.carpark_id]!r}) -- existing seed carparks should "
-                "never re-enter the candidate state machine (see the coverage-expansion "
-                "plan's Definitions section)."
-            )
+            if existing[candidate.carpark_id] != candidate.name:
+                raise SeedListRegenError(
+                    f"Verified candidate carpark_id={candidate.carpark_id!r} "
+                    f"({candidate.name!r}) already exists in the current seed list under a "
+                    f"DIFFERENT name ({existing[candidate.carpark_id]!r}) -- a genuine "
+                    "conflict, refusing to guess which name is correct."
+                )
+            continue  # already applied by a prior wave, same name -- harmless no-op
         if candidate.carpark_id in seen_verified:
             if seen_verified[candidate.carpark_id] != candidate.name:
                 raise SeedListRegenError(
