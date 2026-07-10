@@ -9,21 +9,25 @@
 export interface SeedCarpark {
   id: string;
   name: string;
+  displayName: string;
+  postalCode?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export const SEED_CARPARKS: readonly SeedCarpark[] = [
-  { id: "1", name: "Suntec City" },
-  { id: "2", name: "Marina Square" },
-  { id: "3", name: "Raffles City" },
-  { id: "11", name: "Cineleisure" },
-  { id: "13", name: "Ngee Ann City" },
-  { id: "15", name: "Wheelock Place" },
-  { id: "16", name: "VivoCity P3" },
-  { id: "21", name: "Centrepoint" },
-  { id: "24", name: "313@Somerset" },
-  { id: "50", name: "VivoCity P2" },
-  { id: "100", name: "Test Mall Beta" },
-  { id: "205", name: "Test Mall Alpha" },
+  { id: "1", name: "Suntec City", displayName: "Suntec City" },
+  { id: "2", name: "Marina Square", displayName: "Marina Square" },
+  { id: "3", name: "Raffles City", displayName: "Raffles City" },
+  { id: "11", name: "Cineleisure", displayName: "Cineleisure" },
+  { id: "13", name: "Ngee Ann City", displayName: "Ngee Ann City" },
+  { id: "15", name: "Wheelock Place", displayName: "Wheelock Place" },
+  { id: "16", name: "VivoCity P3", displayName: "VivoCity P3" },
+  { id: "21", name: "Centrepoint", displayName: "Centrepoint" },
+  { id: "24", name: "313@Somerset", displayName: "313@Somerset" },
+  { id: "50", name: "VivoCity P2", displayName: "VivoCity P2" },
+  { id: "100", name: "Test Mall Beta", displayName: "Test Mall Beta" },
+  { id: "205", name: "Test Mall Alpha", displayName: "Test Mall Alpha" },
 ];
 
 const SEED_CARPARK_IDS: ReadonlySet<string> = new Set(SEED_CARPARKS.map((c) => c.id));

@@ -55,6 +55,7 @@ import json
 import logging
 import re
 import sys
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -97,6 +98,64 @@ logger = logging.getLogger(__name__)
 
 class SeedListRegenError(ValueError):
     """Raised on any invalid input -- never write a partial or empty file after this."""
+
+
+@dataclass(frozen=True)
+class OnemapFields:
+    """One carpark's OneMap enrichment (scripts/onemap_enrich.py), optional per field.
+
+    Attributes:
+        display_name: OneMap's building name, or None if unresolvable -- consumers
+            (render_frontend_seed_carparks_ts) fall back to the carpark's raw `name` in
+            that case ("honest beats invented": never fabricate a friendlier name).
+        postal_code: 6-digit postal code, or None if unresolvable.
+        latitude: WGS84 latitude, or None if never enriched / missing from the LTA feed
+            at enrichment time.
+        longitude: WGS84 longitude, or None likewise.
+    """
+
+    display_name: str | None
+    postal_code: str | None
+    latitude: float | None
+    longitude: float | None
+
+
+def fetch_onemap_enrichment(supabase_url: str, supabase_key: str) -> dict[str, OnemapFields]:
+    """Fetch every carpark's OneMap enrichment directly from production.
+
+    A live Supabase read, not sourced from the coverage-map JSON -- OneMap enrichment
+    happens AFTER a carpark is already verified and inserted (scripts/onemap_enrich.py
+    runs against the `carparks` table, not the coverage map), so `carparks` is the only
+    up-to-date source for this data. Consistent with recon_full_feed.py's precedent of a
+    live Supabase read for ground truth rather than a hardcoded/stale local copy.
+
+    Args:
+        supabase_url: Supabase project base URL.
+        supabase_key: Supabase service-role key.
+
+    Returns:
+        Mapping of carpark_id -> OnemapFields, for every row `carparks` currently has
+        (including ones never enriched -- all four fields None in that case).
+    """
+    url = (
+        f"{supabase_url.rstrip('/')}/rest/v1/carparks"
+        "?select=carpark_id,latitude,longitude,onemap_building_name,onemap_postal_code"
+    )
+    request = urllib.request.Request(
+        url, headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        rows = json.loads(response.read().decode("utf-8"))
+
+    return {
+        row["carpark_id"]: OnemapFields(
+            display_name=row.get("onemap_building_name"),
+            postal_code=row.get("onemap_postal_code"),
+            latitude=row.get("latitude"),
+            longitude=row.get("longitude"),
+        )
+        for row in rows
+    }
 
 
 @dataclass(frozen=True)
@@ -347,7 +406,11 @@ def render_poller_carparks_ts(original_text: str, combined: dict[str, str]) -> s
     return new_text
 
 
-def render_frontend_seed_carparks_ts(original_text: str, combined: dict[str, str]) -> str:
+def render_frontend_seed_carparks_ts(
+    original_text: str,
+    combined: dict[str, str],
+    onemap_data: dict[str, OnemapFields] | None = None,
+) -> str:
     """Regenerate frontend/src/seed/seedCarparks.ts's text with a new SEED_CARPARKS body.
 
     Only the SEED_CARPARKS array literal changes -- the SeedCarpark interface, the
@@ -357,6 +420,12 @@ def render_frontend_seed_carparks_ts(original_text: str, combined: dict[str, str
     Args:
         original_text: Current full text of frontend/src/seed/seedCarparks.ts.
         combined: Combined id->name mapping to render.
+        onemap_data: Optional carpark_id -> OnemapFields (from `fetch_onemap_enrichment`).
+            When omitted (the default -- used by tests and any caller without live
+            Supabase access), every entry renders with `displayName` equal to `name` and
+            no postalCode/latitude/longitude, matching this function's pre-OneMap output
+            exactly. When present, a carpark's `displayName` is its OneMap building name
+            if resolved, else falls back to `name` -- never a fabricated name.
 
     Returns:
         New full file text -- identical to original_text except for the SEED_CARPARKS
@@ -365,10 +434,23 @@ def render_frontend_seed_carparks_ts(original_text: str, combined: dict[str, str
     Raises:
         SeedListRegenError: If the SEED_CARPARKS block cannot be located.
     """
-    body = "\n".join(
-        f"  {{ id: {ts_string_literal(carpark_id)}, name: {ts_string_literal(name)} }},"
-        for carpark_id, name in sorted_entries(combined)
-    )
+    onemap_data = onemap_data or {}
+    lines = []
+    for carpark_id, name in sorted_entries(combined):
+        fields = onemap_data.get(carpark_id)
+        display_name = (fields.display_name if fields else None) or name
+        parts = [
+            f"id: {ts_string_literal(carpark_id)}",
+            f"name: {ts_string_literal(name)}",
+            f"displayName: {ts_string_literal(display_name)}",
+        ]
+        if fields and fields.postal_code:
+            parts.append(f"postalCode: {ts_string_literal(fields.postal_code)}")
+        if fields and fields.latitude is not None and fields.longitude is not None:
+            parts.append(f"latitude: {fields.latitude}")
+            parts.append(f"longitude: {fields.longitude}")
+        lines.append(f"  {{ {', '.join(parts)} }},")
+    body = "\n".join(lines)
 
     def _replace(match: re.Match[str]) -> str:
         return match.group(1) + body + match.group(3)
@@ -386,6 +468,9 @@ def regenerate(
     coverage_map_path: Path,
     poller_ts_path: Path,
     frontend_ts_path: Path,
+    *,
+    supabase_url: str | None = None,
+    supabase_key: str | None = None,
 ) -> None:
     """Regenerate both seed-list files in-place from a coverage-map JSON.
 
@@ -399,6 +484,12 @@ def regenerate(
         poller_ts_path: Path to poller/src/carparks.ts (or a test-fixture stand-in).
         frontend_ts_path: Path to frontend/src/seed/seedCarparks.ts (or a test-fixture
             stand-in).
+        supabase_url: Optional -- if given (with supabase_key), fetches OneMap
+            enrichment live and embeds it in the frontend output. Omit to regenerate
+            without it (e.g. no network access, or OneMap enrichment doesn't matter for
+            this run) -- displayName then just mirrors name for every carpark, matching
+            this function's pre-OneMap behavior exactly.
+        supabase_key: Supabase service-role key, required if supabase_url is given.
 
     Raises:
         SeedListRegenError: On any invalid input, per the functions above.
@@ -410,8 +501,12 @@ def regenerate(
     verified = load_verified_candidates(coverage_map_path)
     combined = build_combined_carparks(existing, verified)
 
+    onemap_data = None
+    if supabase_url and supabase_key:
+        onemap_data = fetch_onemap_enrichment(supabase_url, supabase_key)
+
     new_poller_text = render_poller_carparks_ts(poller_original, combined)
-    new_frontend_text = render_frontend_seed_carparks_ts(frontend_original, combined)
+    new_frontend_text = render_frontend_seed_carparks_ts(frontend_original, combined, onemap_data)
 
     poller_ts_path.write_text(new_poller_text, encoding="utf-8", newline="\n")
     frontend_ts_path.write_text(new_frontend_text, encoding="utf-8", newline="\n")
@@ -440,8 +535,21 @@ def main() -> None:
     parser.add_argument("--frontend-ts", type=Path, default=DEFAULT_FRONTEND_TS_PATH)
     args = parser.parse_args()
 
+    import os
+
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not supabase_url or not supabase_key:
+        logger.warning(
+            "SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set -- regenerating without OneMap "
+            "enrichment (displayName will mirror name for every carpark)."
+        )
+
     try:
-        regenerate(args.coverage_map, args.poller_ts, args.frontend_ts)
+        regenerate(
+            args.coverage_map, args.poller_ts, args.frontend_ts,
+            supabase_url=supabase_url, supabase_key=supabase_key,
+        )
     except SeedListRegenError as exc:
         logger.error("%s", exc)
         sys.exit(1)

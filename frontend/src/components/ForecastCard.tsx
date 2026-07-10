@@ -22,7 +22,7 @@ interface ForecastCardProps {
  * is degraded).
  */
 export function ForecastCard({ carparkId, forecastQuery, theme }: ForecastCardProps) {
-  const displayName = getSeedCarparkById(carparkId)?.name ?? carparkId;
+  const displayName = getSeedCarparkById(carparkId)?.displayName ?? carparkId;
 
   if (forecastQuery.status === "loading") {
     return <ForecastCardSkeleton name={displayName} />;

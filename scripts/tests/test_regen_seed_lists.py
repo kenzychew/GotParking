@@ -158,6 +158,116 @@ def test_regenerate_matches_expected_fixtures(workdir: Path) -> None:
     assert frontend_ts.read_text(encoding="utf-8") == expected_frontend
 
 
+class TestOnemapEnrichmentRender:
+    """render_frontend_seed_carparks_ts with real OnemapFields data (2026-07-10)."""
+
+    def test_resolved_carpark_uses_onemap_display_name_and_fields(self) -> None:
+        combined = {"1": "Suntec City"}
+        onemap_data = {
+            "1": rsl.OnemapFields(
+                display_name="SUNTEC SINGAPORE CONVENTION & EXHIBITION CENTRE",
+                postal_code="039593",
+                latitude=1.2935,
+                longitude=103.8572,
+            )
+        }
+        text = "export const SEED_CARPARKS: readonly SeedCarpark[] = [\n\n];"
+
+        rendered = rsl.render_frontend_seed_carparks_ts(text, combined, onemap_data)
+
+        assert 'name: "Suntec City"' in rendered
+        assert 'displayName: "SUNTEC SINGAPORE CONVENTION & EXHIBITION CENTRE"' in rendered
+        assert 'postalCode: "039593"' in rendered
+        assert "latitude: 1.2935" in rendered
+        assert "longitude: 103.8572" in rendered
+
+    def test_unresolvable_carpark_falls_back_to_raw_name_never_fabricates(self) -> None:
+        """The core "honest beats invented" guarantee, at the render layer: a carpark
+        with a None display_name (OneMap couldn't resolve it) must render displayName
+        equal to the raw name, and must NOT emit a postalCode/lat/lon key at all."""
+        combined = {"99": "BLK 101 SOMEWHERE"}
+        onemap_data = {
+            "99": rsl.OnemapFields(
+                display_name=None, postal_code=None, latitude=1.3, longitude=103.8
+            )
+        }
+        text = "export const SEED_CARPARKS: readonly SeedCarpark[] = [\n\n];"
+
+        rendered = rsl.render_frontend_seed_carparks_ts(text, combined, onemap_data)
+
+        assert 'displayName: "BLK 101 SOMEWHERE"' in rendered
+        assert "postalCode" not in rendered
+        # latitude/longitude ARE still written -- coordinates were saved even though
+        # the building name itself was unresolvable (see onemap_enrich.py).
+        assert "latitude: 1.3" in rendered
+
+    def test_carpark_absent_from_onemap_data_entirely_still_renders_with_fallback(self) -> None:
+        """A carpark never enriched at all (not in the dict) behaves identically to one
+        enriched-but-unresolvable -- displayName falls back to name, no crash."""
+        combined = {"1": "Suntec City"}
+        text = "export const SEED_CARPARKS: readonly SeedCarpark[] = [\n\n];"
+
+        rendered = rsl.render_frontend_seed_carparks_ts(text, combined, onemap_data={})
+
+        assert 'displayName: "Suntec City"' in rendered
+        assert "postalCode" not in rendered
+        assert "latitude" not in rendered
+
+
+class TestFetchOnemapEnrichment:
+    """fetch_onemap_enrichment against a fake urllib transport (no real network)."""
+
+    def test_parses_carparks_response_into_onemap_fields(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import json as json_module
+        import urllib.request
+
+        captured_url: dict[str, str] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json_module.dumps(
+                    [
+                        {
+                            "carpark_id": "1",
+                            "latitude": 1.2935,
+                            "longitude": 103.8572,
+                            "onemap_building_name": "SUNTEC CITY MALL",
+                            "onemap_postal_code": "039593",
+                        },
+                        {
+                            "carpark_id": "99",
+                            "latitude": None,
+                            "longitude": None,
+                            "onemap_building_name": None,
+                            "onemap_postal_code": None,
+                        },
+                    ]
+                ).encode("utf-8")
+
+        def fake_urlopen(request: object, timeout: float = 15) -> FakeResponse:
+            captured_url["url"] = request.full_url  # type: ignore[attr-defined]
+            return FakeResponse()
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        result = rsl.fetch_onemap_enrichment("https://x.supabase.co", "key")
+
+        assert "carparks?select=" in captured_url["url"]
+        assert result["1"] == rsl.OnemapFields(
+            display_name="SUNTEC CITY MALL", postal_code="039593",
+            latitude=1.2935, longitude=103.8572,
+        )
+        assert result["99"] == rsl.OnemapFields(
+            display_name=None, postal_code=None, latitude=None, longitude=None
+        )
+
+
 def test_regenerate_round_trips_an_alphanumeric_carpark_id(tmp_path: Path, workdir: Path) -> None:
     """Regression: end-to-end, an alphanumeric-ID candidate (e.g. "A0007") is written into
     poller/src/carparks.ts by one regenerate() call, then correctly RE-PARSED back out by

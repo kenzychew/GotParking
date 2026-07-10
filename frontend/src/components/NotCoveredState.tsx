@@ -20,7 +20,7 @@ export function NotCoveredState({ onSelect }: NotCoveredStateProps) {
         {SEED_CARPARKS.map((carpark) => (
           <li key={carpark.id}>
             <button type="button" onClick={() => onSelect(carpark.id)}>
-              {carpark.name}
+              {carpark.displayName}
             </button>
           </li>
         ))}

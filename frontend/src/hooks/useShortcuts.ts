@@ -37,7 +37,7 @@ export function useShortcuts(): UseShortcutsResult {
     () =>
       getTopShortcuts(records).map((record) => ({
         carparkId: record.carparkId,
-        name: getSeedCarparkById(record.carparkId)?.name ?? record.carparkId,
+        name: getSeedCarparkById(record.carparkId)?.displayName ?? record.carparkId,
       })),
     [records],
   );
