@@ -39,6 +39,29 @@ SEARCH_URL = "https://www.onemap.gov.sg/api/common/elastic/search"
 REVERSE_GEOCODE_BUFFER_METERS = 40
 
 
+def _clean_onemap_field(value: object) -> str:
+    """Clean one OneMap response field, treating its "NIL" convention as empty.
+
+    OneMap's own convention for "no value" on BUILDINGNAME/BLOCK/ROAD/POSTALCODE (both
+    the reverse-geocode and search endpoints) is the literal string `"NIL"`, not an
+    empty/missing field -- found live 2026-07-10 auditing the first real enrichment
+    batch: 99 of 267 carparks got the literal string "NIL" written as their building
+    name before this was caught, and a second, narrower case (Sentosa: BUILDINGNAME
+    resolved fine but BLOCK and ROAD were independently "NIL") showed this needs
+    applying per-field, not just to the one field that happens to gate the overall
+    unresolvable decision.
+
+    Args:
+        value: A raw field value from an OneMap response (usually a string, but the
+            `.get()` result could be missing/None).
+
+    Returns:
+        The stripped string, or "" if the field was missing or the literal "NIL".
+    """
+    text = str(value or "").strip()
+    return "" if text.upper() == "NIL" else text
+
+
 class OneMapError(Exception):
     """Base class for OneMap client errors."""
 
@@ -161,18 +184,16 @@ def reverse_geocode(
     if not matches:
         return None
     best = matches[0]
-    building_name = str(best.get("BUILDINGNAME", "")).strip()
-    if not building_name or building_name.upper() == "NIL":
+
+    building_name = _clean_onemap_field(best.get("BUILDINGNAME"))
+    if not building_name:
         return None
-    postal_code = str(best.get("POSTALCODE", "")).strip()
-    if postal_code.upper() == "NIL":
-        postal_code = ""
-    block = str(best.get("BLOCK", "")).strip()
-    if block.upper() == "NIL":
-        block = ""
+    postal_code = _clean_onemap_field(best.get("POSTALCODE"))
+    block = _clean_onemap_field(best.get("BLOCK"))
+    road = _clean_onemap_field(best.get("ROAD"))
     return GeocodeResult(
         building_name=building_name,
-        address=f"{block} {best.get('ROAD', '')}".strip(),
+        address=f"{block} {road}".strip(),
         postal_code=postal_code,
         latitude=float(best["LATITUDE"]),
         longitude=float(best["LONGITUDE"]),
@@ -217,14 +238,10 @@ def search_postal_code(
         return None
     best = results[0]
 
-    def _clean(value: object) -> str:
-        text = str(value or "").strip()
-        return "" if text.upper() == "NIL" else text
-
     return GeocodeResult(
-        building_name=_clean(best.get("BUILDING")),
-        address=_clean(best.get("ADDRESS")),
-        postal_code=_clean(best.get("POSTAL")),
+        building_name=_clean_onemap_field(best.get("BUILDING")),
+        address=_clean_onemap_field(best.get("ADDRESS")),
+        postal_code=_clean_onemap_field(best.get("POSTAL")),
         latitude=float(best["LATITUDE"]),
         longitude=float(best["LONGITUDE"]),
     )

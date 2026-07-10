@@ -105,6 +105,35 @@ def test_reverse_geocode_returns_none_when_onemap_matches_a_road_with_no_buildin
     assert result is None
 
 
+def test_reverse_geocode_cleans_nil_block_and_road_independently_of_building_name() -> None:
+    """Regression, found live 2026-07-10: Sentosa's coordinate resolved a REAL building
+    name ("SENTOSA") but BLOCK and ROAD were independently "NIL" -- a fix that only
+    checked BUILDINGNAME left address constructed as the literal string "NIL" (block=""
+    + road="NIL" -> " NIL".strip() == "NIL"). Every field must be cleaned
+    independently, not just the one that gates the overall unresolvable decision."""
+
+    def fake_get(url: str, headers: dict) -> dict:
+        return {
+            "GeocodeInfo": [
+                {
+                    "BUILDINGNAME": "SENTOSA",
+                    "BLOCK": "NIL",
+                    "ROAD": "NIL",
+                    "POSTALCODE": "NIL",
+                    "LATITUDE": "1.25017",
+                    "LONGITUDE": "103.83126",
+                }
+            ]
+        }
+
+    result = reverse_geocode("tok-123", 1.25017, 103.83126, get_json_fn=fake_get)
+
+    assert result is not None
+    assert result.building_name == "SENTOSA"
+    assert result.address == ""
+    assert result.postal_code == ""
+
+
 def test_reverse_geocode_raises_unavailable_on_transport_failure() -> None:
     import urllib.error
 
