@@ -210,40 +210,40 @@ def _load_history_stats(
 ) -> dict[str, HistoryStats]:
     """Fetch (first_polled_at, sample_count, capacity, live_lots) per carpark.
 
-    Issues exactly one `select_all` call against `carpark_history` for
-    every requested carpark_id at once (via a `carpark_id=in.(...)`
-    filter, the same idiom `_load_baseline` uses for `carpark_baseline`),
-    rather than the three order+limit=1 point queries per carpark this
-    function used previously -- that was O(3 x carparks) sequential HTTP
-    round-trips, which stops being "acceptable at this scale" once carpark
-    coverage grows past a handful of rows. `carpark_history`'s primary key
-    is `(carpark_id, polled_at)` (already indexed), so a single
-    `carpark_id,polled_at,available_lots` select for all requested
-    carparks is well-supported. The four per-carpark stats are then
-    derived in Python by grouping the returned rows by carpark_id and
-    scanning each group in polled_at order: the earliest IN-WINDOW row
-    gives first_polled_at, the row count gives sample_count, the latest
-    row's available_lots gives live_lots, and the max available_lots
-    across the group gives capacity.
+    Calls the `carpark_history_stats` Postgres function (db/schema.sql) via
+    a single RPC instead of fetching raw rows: MIN(polled_at), COUNT(*),
+    MAX(available_lots), and the latest-by-polled_at available_lots are all
+    aggregated server-side, so this function's own HTTP response is one row
+    per requested carpark_id -- never one row per historical poll.
 
-    The query is also bounded to the last HISTORY_STATS_LOOKBACK_DAYS
-    (`polled_at=gte.<cutoff>`) instead of a carpark's entire lifetime
-    history (found live 2026-07-09: at 268 carparks and ~14k
-    `carpark_history` rows, the unbounded version was already forcing 16
-    paginated requests every 5-minute cycle, for a table that never stops
-    growing). This is safe for `_is_cold_start`'s purposes specifically:
-    that check only needs to know whether the earliest sample is older
-    than COLD_START_MIN_AGE_HOURS, not the TRUE all-time-earliest
+    History (2026-07-09/10): the original implementation issued 3
+    order+limit=1 point queries per carpark (O(3 x carparks) sequential
+    round-trips). A first fix collapsed that to one `select_all` call
+    across every carpark_id at once, which stayed correct until carpark
+    coverage grew enough that the RESULT SIZE itself (not the round-trip
+    count) started exceeding PostgREST's page size -- 16 paginated
+    requests at 268 carparks / ~14k rows. A second fix bounded the read to
+    HISTORY_STATS_LOOKBACK_DAYS, which helped but didn't solve the
+    underlying issue: even a time-bounded raw-row fetch at 268 carparks
+    approaches a ~540k-row steady state once the window fully populates
+    (57+ paginated requests, growing). This RPC is the fix that actually
+    holds at that scale -- the aggregation itself was always the true
+    fix; bounding the client-side result set was only ever going to delay
+    the same problem, not prevent it.
+
+    The RPC's own query is still bounded to HISTORY_STATS_LOOKBACK_DAYS
+    (`p_since`), for the same reason the prior fix bounded its `select_all`
+    call: `_is_cold_start` only needs to know whether the earliest sample
+    is older than COLD_START_MIN_AGE_HOURS, not the TRUE all-time-earliest
     timestamp. Since HISTORY_STATS_LOOKBACK_DAYS is set comfortably above
     that threshold (see config.py's comment), one of two things is always
     true -- either the carpark's true first-ever sample is WITHIN the
-    window (this function reports it exactly, no distortion), or it's
-    OLDER than the window (this function reports a later-than-true
-    first_polled_at, but one that's still older than the threshold, so
-    the cold-start classification outcome is identical either way).
-    capacity/sample_count become bounded-window values rather than
-    all-time ones -- a deliberate, more-representative-of-current-state
-    narrowing, not an oversight (a stale all-time max from before a
+    window (first_polled_at is exact, no distortion), or it's OLDER than
+    the window (first_polled_at is later-than-true but still older than
+    the threshold, so the cold-start classification outcome is identical
+    either way). capacity/sample_count become bounded-window values rather
+    than all-time ones -- a deliberate, more-representative-of-current-
+    state narrowing, not an oversight (a stale all-time max from before a
     carpark's capacity changed is not obviously more "correct").
 
     Args:
@@ -268,30 +268,20 @@ def _load_history_stats(
         return stats
 
     cutoff = now - timedelta(days=HISTORY_STATS_LOOKBACK_DAYS)
-    ids = ",".join(carpark_ids)
-    rows = db.select_all(
-        "carpark_history",
-        params={
-            "select": "carpark_id,polled_at,available_lots",
-            "carpark_id": f"in.({ids})",
-            "polled_at": f"gte.{cutoff.isoformat()}",
-            "order": "carpark_id.asc,polled_at.asc",
-        },
+    rows = db.rpc(
+        "carpark_history_stats",
+        {"p_carpark_ids": carpark_ids, "p_since": cutoff.isoformat()},
     )
 
-    grouped: dict[str, list[tuple[datetime, int]]] = {}
     for row in rows:
-        grouped.setdefault(row["carpark_id"], []).append(
-            (parse_timestamp(row["polled_at"]), row["available_lots"])
-        )
-
-    for carpark_id, samples in grouped.items():
-        samples.sort(key=lambda sample: sample[0])
+        carpark_id = row["carpark_id"]
+        if carpark_id not in stats:
+            continue  # defense in depth -- the function is called with exactly carpark_ids
         stats[carpark_id] = HistoryStats(
-            first_polled_at=samples[0][0],
-            sample_count=len(samples),
-            capacity=max(available for _, available in samples),
-            live_lots=samples[-1][1],
+            first_polled_at=parse_timestamp(row["first_polled_at"]),
+            sample_count=row["sample_count"],
+            capacity=row["capacity"],
+            live_lots=row["live_lots"],
         )
     return stats
 

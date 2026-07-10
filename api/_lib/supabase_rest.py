@@ -139,6 +139,10 @@ class SupabaseClient(Protocol):
         """See :meth:`SupabaseREST.upsert`."""
         ...
 
+    def rpc(self, function_name: str, args: dict[str, Any]) -> list[dict[str, Any]]:
+        """See :meth:`SupabaseREST.rpc`."""
+        ...
+
     def download_storage_object(self, bucket: str, path: str) -> bytes:
         """See :meth:`SupabaseREST.download_storage_object`."""
         ...
@@ -327,6 +331,37 @@ class SupabaseREST:
             return resp
 
         self._request_with_retry(f"upsert {table}", do_request)
+
+    def rpc(self, function_name: str, args: dict[str, Any]) -> list[dict[str, Any]]:
+        """Call a Postgres function via PostgREST's ``/rpc/<function_name>`` endpoint.
+
+        Used for server-side aggregation that would otherwise require
+        fetching every matching raw row into Python just to reduce it to
+        a handful of numbers (see ``carpark_history_stats`` in
+        ``db/schema.sql`` and ``batch_logic._load_history_stats``, its
+        only caller as of this writing) -- the function itself returns
+        one row per group, not one row per underlying table row.
+
+        Args:
+            function_name: The Postgres function name (must already be
+                exposed via PostgREST, i.e. defined with the anon/service
+                role granted EXECUTE).
+            args: Named arguments, JSON-encoded as the POST body -- must
+                match the function's parameter names exactly.
+
+        Returns:
+            The function's result rows.
+        """
+        url = f"{self.base_url}/rest/v1/rpc/{function_name}"
+
+        def do_request() -> httpx.Response:
+            resp = self._client.post(url, headers=self._headers, json=args)
+            resp.raise_for_status()
+            return resp
+
+        resp = self._request_with_retry(f"rpc {function_name}", do_request)
+        result: list[dict[str, Any]] = resp.json()
+        return result
 
     def download_storage_object(self, bucket: str, path: str) -> bytes:
         """Download a Supabase Storage object.

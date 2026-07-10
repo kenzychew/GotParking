@@ -5,6 +5,7 @@ All network I/O is replaced with httpx.MockTransport (see conftest.py).
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import httpx
@@ -205,6 +206,50 @@ class TestUpsert:
 
         with pytest.raises(SupabaseUnavailableError):
             client.upsert("carpark_forecast", [{"carpark_id": "1"}])
+
+
+class TestRpc:
+    """Tests for SupabaseREST.rpc()."""
+
+    def test_posts_to_rpc_endpoint_with_json_args_and_returns_rows(
+        self,
+        make_routed_transport: RoutedTransportFactory,
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            captured["method"] = request.method
+            captured["body"] = request.content
+            return httpx.Response(
+                200, json=[{"carpark_id": "1", "sample_count": 5}]
+            )
+
+        client = _client(make_routed_transport(handler))
+
+        result = client.rpc(
+            "carpark_history_stats", {"p_carpark_ids": ["1", "2"], "p_since": "2026-01-01T00:00:00+00:00"}
+        )
+
+        assert captured["method"] == "POST"
+        assert str(captured["url"]) == f"{BASE_URL}/rest/v1/rpc/carpark_history_stats"
+        assert json.loads(captured["body"]) == {  # type: ignore[arg-type]
+            "p_carpark_ids": ["1", "2"],
+            "p_since": "2026-01-01T00:00:00+00:00",
+        }
+        assert result == [{"carpark_id": "1", "sample_count": 5}]
+
+    def test_raises_supabase_unavailable_when_rpc_fails_twice(
+        self,
+        make_sequential_transport: SequentialTransportFactory,
+    ) -> None:
+        transport = make_sequential_transport(
+            [httpx.Response(500, text="fail"), httpx.Response(500, text="fail again")]
+        )
+        client = _client(transport)
+
+        with pytest.raises(SupabaseUnavailableError):
+            client.rpc("carpark_history_stats", {"p_carpark_ids": ["1"], "p_since": "2026-01-01"})
 
 
 class TestDownloadStorageObject:

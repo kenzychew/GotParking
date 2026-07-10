@@ -640,21 +640,20 @@ class TestTenCarparkCount:
 class TestLoadHistoryStats:
     """T6: `_load_history_stats` was rewritten from 3 order+limit=1 point
     queries per carpark (O(3 x carparks) sequential HTTP round-trips) to a
-    single `select_all` call covering every requested carpark_id at once.
-    These tests target that function directly rather than through
-    `run_batch_predict`, so the request-count reduction is asserted, not
-    just incidentally true.
+    single `select_all` call covering every requested carpark_id at once,
+    then (T6b, 2026-07-09) bounded to a lookback window, then (T6c,
+    2026-07-10) rewritten again to a single RPC call that aggregates
+    server-side -- see batch_logic._load_history_stats's docstring for the
+    full history and the reasoning behind each step. These tests target
+    the function directly rather than through `run_batch_predict`, so the
+    request-shape is asserted, not just incidentally true.
 
-    T6b (2026-07-09): the read is now also bounded to
-    HISTORY_STATS_LOOKBACK_DAYS instead of a carpark's entire lifetime
-    history -- see batch_logic._load_history_stats's docstring for the
-    correctness argument. Test data below stays within that window
-    (HISTORY_STATS_LOOKBACK_DAYS=7) so these three tests' expectations are
-    unaffected by the bound; TestLoadHistoryStatsTimeBound below tests the
-    bound itself.
+    Test data below stays within HISTORY_STATS_LOOKBACK_DAYS (7) so these
+    three tests' expectations are unaffected by the lookback bound;
+    TestLoadHistoryStatsTimeBound below tests the bound itself.
     """
 
-    def test_one_select_all_call_computes_correct_stats_for_all_carparks(self) -> None:
+    def test_one_rpc_call_computes_correct_stats_for_all_carparks(self) -> None:
         history: list[dict[str, object]] = []
         history += make_history_rows(
             "1", 5, NOW - timedelta(days=4), NOW - timedelta(minutes=5),
@@ -672,14 +671,16 @@ class TestLoadHistoryStats:
 
         stats = _load_history_stats(db, ["1", "2", "3"], NOW)
 
-        # Exactly ONE request total was made against carpark_history -- not
-        # three-per-carpark (9 requests for 3 carparks under the old
-        # implementation). This is the actual regression this rewrite fixes.
+        # Exactly ONE request total was made against carpark_history -- via
+        # RPC, not select/select_all at all. This is the actual regression
+        # this rewrite fixes: one row OUT per carpark, not one row per
+        # historical poll IN.
         assert db.select_calls == []
-        assert len(db.select_all_calls) == 1
-        table, params = db.select_all_calls[0]
-        assert table == "carpark_history"
-        assert params["carpark_id"] == "in.(1,2,3)"
+        assert db.select_all_calls == []
+        assert len(db.rpc_calls) == 1
+        function_name, args = db.rpc_calls[0]
+        assert function_name == "carpark_history_stats"
+        assert args["p_carpark_ids"] == ["1", "2", "3"]
 
         assert stats["1"] == HistoryStats(
             first_polled_at=NOW - timedelta(days=4),
@@ -723,24 +724,26 @@ class TestLoadHistoryStats:
         stats = _load_history_stats(db, [], NOW)
 
         assert stats == {}
-        assert db.select_all_calls == []
+        assert db.rpc_calls == []
 
 
 class TestLoadHistoryStatsTimeBound:
-    """T6b (2026-07-09): regression tests for the HISTORY_STATS_LOOKBACK_DAYS
-    bound -- the actual fix for the unbounded full-table-scan egress issue
-    found live (14,013 rows, 16 paginated requests per 5-minute cycle,
-    growing forever)."""
+    """T6b/T6c (2026-07-09/10): regression tests for the
+    HISTORY_STATS_LOOKBACK_DAYS bound, now passed as the RPC's `p_since`
+    argument -- closing the unbounded-growth egress issue found live
+    (14,013 rows -> 56,319 rows in hours; a bounded-but-still-raw-row read
+    approached a ~540k-row steady state at 268 carparks, which the RPC
+    aggregation (not just the bound) actually solves)."""
 
-    def test_query_includes_a_polled_at_gte_cutoff(self) -> None:
+    def test_rpc_call_includes_a_p_since_cutoff(self) -> None:
         db = FakeSupabaseDB(tables={"carpark_history": []})
 
         _load_history_stats(db, ["1"], NOW)
 
-        table, params = db.select_all_calls[0]
-        assert table == "carpark_history"
+        function_name, args = db.rpc_calls[0]
+        assert function_name == "carpark_history_stats"
         expected_cutoff = (NOW - timedelta(days=HISTORY_STATS_LOOKBACK_DAYS)).isoformat()
-        assert params["polled_at"] == f"gte.{expected_cutoff}"
+        assert args["p_since"] == expected_cutoff
 
     def test_rows_older_than_the_window_are_excluded_from_the_aggregate(self) -> None:
         # 10 rows spanning 10 days ago -> 5 minutes ago; only the ones within

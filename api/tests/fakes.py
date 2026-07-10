@@ -70,17 +70,22 @@ class FakeSupabaseDB:
             treats SupabaseUnavailableError identically regardless of which
             attempt inside SupabaseREST produced it).
         fail_upsert: If True, `upsert` raises SupabaseUnavailableError.
+        fail_rpc: Function names that should raise SupabaseUnavailableError
+            on the next `rpc` call.
         select_calls: Every (table, params) pair passed to `select`, in
             call order -- lets tests assert on request counts/shapes.
         select_all_calls: Same, but for `select_all` calls.
+        rpc_calls: Every (function_name, args) pair passed to `rpc`.
     """
 
     tables: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     storage: dict[str, Any] = field(default_factory=dict)
     fail_tables: set[str] = field(default_factory=set)
     fail_upsert: bool = False
+    fail_rpc: set[str] = field(default_factory=set)
     select_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     select_all_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    rpc_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     upserted: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     download_calls: list[str] = field(default_factory=list)
 
@@ -139,6 +144,57 @@ class FakeSupabaseDB:
         if self.fail_upsert:
             raise SupabaseUnavailableError(f"upsert {table}")
         self.upserted[table] = rows
+
+    def rpc(self, function_name: str, args: dict[str, Any]) -> list[dict[str, Any]]:
+        """Simulate `carpark_history_stats` (the only RPC this fake supports so far).
+
+        Reimplements the Postgres function's own aggregation
+        (MIN/COUNT/MAX/latest-by-polled_at, grouped by carpark_id) over
+        `self.tables["carpark_history"]`, so tests exercise the same
+        filtering semantics `_matches_filter` already provides rather than
+        a bespoke shortcut.
+        """
+        if function_name in self.fail_rpc:
+            raise SupabaseUnavailableError(f"rpc {function_name}")
+        self.rpc_calls.append((function_name, dict(args)))
+        if function_name != "carpark_history_stats":
+            raise NotImplementedError(f"FakeSupabaseDB: unsupported rpc {function_name!r}")
+
+        carpark_ids = args["p_carpark_ids"]
+        since = args["p_since"]
+        rows = self._resolve_rows(
+            "carpark_history",
+            {
+                "carpark_id": f"in.({','.join(carpark_ids)})",
+                "polled_at": f"gte.{since}",
+            },
+        )
+
+        from _lib.supabase_rest import parse_timestamp
+
+        grouped: dict[str, list[tuple[datetime, int]]] = {}
+        for row in rows:
+            polled_at = row["polled_at"]
+            grouped.setdefault(row["carpark_id"], []).append(
+                (
+                    parse_timestamp(polled_at) if isinstance(polled_at, str) else polled_at,
+                    row["available_lots"],
+                )
+            )
+
+        result: list[dict[str, Any]] = []
+        for carpark_id, samples in grouped.items():
+            samples.sort(key=lambda sample: sample[0])
+            result.append(
+                {
+                    "carpark_id": carpark_id,
+                    "first_polled_at": samples[0][0].isoformat(),
+                    "sample_count": len(samples),
+                    "capacity": max(available for _, available in samples),
+                    "live_lots": samples[-1][1],
+                }
+            )
+        return result
 
     def download_storage_object(self, bucket: str, path: str) -> bytes:
         key = f"{bucket}/{path}"

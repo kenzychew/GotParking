@@ -66,6 +66,47 @@ comment on table public.carpark_history is
     'training data, baselines, and the cold-start sample count (Premise #10 '
     'counts THESE rows only -- never SINPA pretraining data).';
 
+-- carpark_history_stats: server-side aggregation for batch_predict's per-cycle read
+-- (2026-07-10, replacing a client-side fetch-every-raw-row approach). Found live: at 268
+-- carparks, fetching every carpark_history row within even a bounded time window still
+-- returned tens of thousands of rows (56k+ and growing toward a ~540k steady state once the
+-- window fully populates), forcing dozens of paginated requests every 5-minute cycle just to
+-- compute 4 numbers per carpark. This function does that reduction in Postgres instead of in
+-- Python: one row OUT per carpark_id requested, not one row per historical poll. `security
+-- invoker` (the default, stated explicitly) -- runs with the caller's privileges, which is
+-- always the service-role key here (batch_predict's only caller), already bypassing RLS the
+-- same way a direct REST call does; no elevated SECURITY DEFINER needed.
+create or replace function public.carpark_history_stats(
+    p_carpark_ids text[],
+    p_since timestamptz
+)
+returns table (
+    carpark_id text,
+    first_polled_at timestamptz,
+    sample_count bigint,
+    capacity integer,
+    live_lots integer
+)
+language sql
+stable
+security invoker
+as $$
+    select
+        h.carpark_id,
+        min(h.polled_at) as first_polled_at,
+        count(*) as sample_count,
+        max(h.available_lots) as capacity,
+        (array_agg(h.available_lots order by h.polled_at desc))[1] as live_lots
+    from public.carpark_history h
+    where h.carpark_id = any(p_carpark_ids)
+      and h.polled_at >= p_since
+    group by h.carpark_id;
+$$;
+
+comment on function public.carpark_history_stats is
+    'Per-carpark (first_polled_at, sample_count, capacity, live_lots) aggregated in Postgres, '
+    'not fetched as raw rows -- see batch_logic._load_history_stats, its only caller.';
+
 -- ----------------------------------------------------------------------------
 -- 3) carpark_baseline -- daily precompute (Premise #11)
 -- ----------------------------------------------------------------------------
@@ -202,6 +243,10 @@ revoke all on table public.carpark_forecast from anon, authenticated;
 revoke all on table public.model_config     from anon, authenticated;
 revoke all on table public.training_runs    from anon, authenticated;
 revoke usage, select on all sequences in schema public from anon, authenticated;
+-- Postgres grants EXECUTE on a new function to PUBLIC by default -- without this, anon could
+-- call carpark_history_stats via PostgREST's /rpc/ endpoint and read AGGREGATED
+-- carpark_history data despite the table itself being locked down above.
+revoke execute on function public.carpark_history_stats from anon, authenticated;
 
 -- ----------------------------------------------------------------------------
 -- 9) Storage bucket for model artifacts (private; Premise #9)
