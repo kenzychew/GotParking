@@ -137,8 +137,12 @@ def reverse_geocode(
 
     Returns:
         The nearest match, or None if OneMap has no building within
-        REVERSE_GEOCODE_BUFFER_METERS of the given point (a real, expected outcome for
-        some carparks -- callers must not fabricate a name in this case).
+        REVERSE_GEOCODE_BUFFER_METERS of the given point, OR it matched a road segment
+        with no specific building name (OneMap's own convention: the literal string
+        `"NIL"`, not an empty/missing field -- found live 2026-07-10 affecting 99 of the
+        first 267 carparks enriched, e.g. many HDB/URA off-street coordinates resolve to
+        a road but no named building). Both cases are real, expected outcomes -- callers
+        must not fabricate a name in either case.
 
     Raises:
         OneMapUnavailableError: If the request fails (network error or non-2xx status)
@@ -157,10 +161,19 @@ def reverse_geocode(
     if not matches:
         return None
     best = matches[0]
+    building_name = str(best.get("BUILDINGNAME", "")).strip()
+    if not building_name or building_name.upper() == "NIL":
+        return None
+    postal_code = str(best.get("POSTALCODE", "")).strip()
+    if postal_code.upper() == "NIL":
+        postal_code = ""
+    block = str(best.get("BLOCK", "")).strip()
+    if block.upper() == "NIL":
+        block = ""
     return GeocodeResult(
-        building_name=str(best.get("BUILDINGNAME", "")).strip(),
-        address=f"{best.get('BLOCK', '')} {best.get('ROAD', '')}".strip(),
-        postal_code=str(best.get("POSTALCODE", "")).strip(),
+        building_name=building_name,
+        address=f"{block} {best.get('ROAD', '')}".strip(),
+        postal_code=postal_code,
         latitude=float(best["LATITUDE"]),
         longitude=float(best["LONGITUDE"]),
     )
@@ -182,7 +195,13 @@ def search_postal_code(
             touching the real network).
 
     Returns:
-        The first (best-ranked) match, or None if nothing was found.
+        The first (best-ranked) match, or None if nothing was found. Unlike
+        `reverse_geocode`, a "NIL" (OneMap's own convention for "no value", not an
+        empty/missing field -- see `reverse_geocode`'s docstring) building_name does NOT
+        make this return None: the coordinate is this function's real payload (used for
+        distance search) and stays valid even when the metadata around it doesn't
+        resolve to a specific building. "NIL" fields are cleaned to empty strings
+        instead.
 
     Raises:
         OneMapUnavailableError: If the request fails.
@@ -197,10 +216,15 @@ def search_postal_code(
     if not results:
         return None
     best = results[0]
+
+    def _clean(value: object) -> str:
+        text = str(value or "").strip()
+        return "" if text.upper() == "NIL" else text
+
     return GeocodeResult(
-        building_name=str(best.get("BUILDING", "")).strip(),
-        address=str(best.get("ADDRESS", "")).strip(),
-        postal_code=str(best.get("POSTAL", "")).strip(),
+        building_name=_clean(best.get("BUILDING")),
+        address=_clean(best.get("ADDRESS")),
+        postal_code=_clean(best.get("POSTAL")),
         latitude=float(best["LATITUDE"]),
         longitude=float(best["LONGITUDE"]),
     )

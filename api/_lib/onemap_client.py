@@ -95,7 +95,12 @@ def search_postal_code(token: str, postal_code: str, client: httpx.Client) -> Po
 
     Returns:
         The first (best-ranked) match, or None if nothing was found -- a real, expected
-        outcome for a malformed/nonexistent postal code, not an error.
+        outcome for a malformed/nonexistent postal code, not an error. `building_name`
+        is cleaned to an empty string if OneMap returns the literal "NIL" (its own
+        convention for "no value", found live 2026-07-10 in scripts/onemap_client.py's
+        reverse_geocode -- present here for consistency even though this endpoint
+        doesn't currently expose building_name to the frontend). The coordinate stays
+        valid regardless -- it's this function's real payload, used for distance search.
 
     Raises:
         OneMapUnavailableError: If the request fails.
@@ -115,8 +120,11 @@ def search_postal_code(token: str, postal_code: str, client: httpx.Client) -> Po
     if not results:
         return None
     best = results[0]
+    building_name = str(best.get("BUILDING", "")).strip()
+    if building_name.upper() == "NIL":
+        building_name = ""
     return PostalSearchResult(
-        building_name=str(best.get("BUILDING", "")).strip(),
+        building_name=building_name,
         latitude=float(best["LATITUDE"]),
         longitude=float(best["LONGITUDE"]),
     )

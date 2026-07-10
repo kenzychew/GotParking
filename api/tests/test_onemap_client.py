@@ -90,6 +90,26 @@ class TestSearchPostalCode:
         with pytest.raises(OneMapUnavailableError):
             search_postal_code("tok-123", "039593", _client(transport))
 
+    def test_cleans_a_nil_building_name_but_keeps_the_coordinate(
+        self, make_routed_transport: RoutedTransportFactory
+    ) -> None:
+        """Regression, found live 2026-07-10 (scripts/onemap_client.py's reverse_geocode):
+        OneMap returns the literal string "NIL" for an unresolved building name, not an
+        empty/missing field. Unlike reverse_geocode's stricter behavior, this must NOT
+        return None -- the coordinate is this function's real payload and stays valid."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"results": [{"BUILDING": "NIL", "LATITUDE": "1.37026", "LONGITUDE": "103.8395"}]},
+            )
+
+        result = search_postal_code("tok-123", "560101", _client(make_routed_transport(handler)))
+
+        assert result is not None
+        assert result.building_name == ""
+        assert result.latitude == pytest.approx(1.37026)
+
 
 class TestTokenCache:
     def test_fetches_once_and_reuses_on_subsequent_calls(

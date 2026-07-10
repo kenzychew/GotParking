@@ -78,6 +78,33 @@ def test_reverse_geocode_returns_none_for_unresolvable_coordinate() -> None:
     assert result is None
 
 
+def test_reverse_geocode_returns_none_when_onemap_matches_a_road_with_no_building_name() -> None:
+    """Regression, found live 2026-07-10: a NON-empty GeocodeInfo whose BUILDINGNAME is
+    the literal string "NIL" (OneMap's own convention for "matched a road segment, no
+    specific building here" -- NOT the same as an empty GeocodeInfo array) must ALSO
+    return None, not the literal string "NIL" as if it were a real building name. This
+    affected 99 of the first 267 carparks enriched before the fix -- mostly HDB/URA
+    off-street coordinates with no named building nearby."""
+
+    def fake_get(url: str, headers: dict) -> dict:
+        return {
+            "GeocodeInfo": [
+                {
+                    "BUILDINGNAME": "NIL",
+                    "BLOCK": "NIL",
+                    "ROAD": "ARAB STREET",
+                    "POSTALCODE": "NIL",
+                    "LATITUDE": "1.30294184422517",
+                    "LONGITUDE": "103.857025273117",
+                }
+            ]
+        }
+
+    result = reverse_geocode("tok-123", 1.30294184422517, 103.857025273117, get_json_fn=fake_get)
+
+    assert result is None
+
+
 def test_reverse_geocode_raises_unavailable_on_transport_failure() -> None:
     import urllib.error
 
@@ -117,3 +144,30 @@ def test_search_postal_code_returns_none_when_nothing_found() -> None:
     result = search_postal_code("tok-123", "999999", get_json_fn=fake_get)
 
     assert result is None
+
+
+def test_search_postal_code_cleans_nil_fields_but_keeps_the_coordinate() -> None:
+    """Unlike reverse_geocode, a "NIL" building_name does NOT make this return None --
+    the coordinate is this function's real payload (postal-code distance search) and
+    stays valid even when OneMap's metadata doesn't resolve to a specific building."""
+
+    def fake_get(url: str, headers: dict) -> dict:
+        return {
+            "results": [
+                {
+                    "BUILDING": "NIL",
+                    "ADDRESS": "NIL",
+                    "POSTAL": "560101",
+                    "LATITUDE": "1.37026158388486",
+                    "LONGITUDE": "103.839467898898",
+                }
+            ]
+        }
+
+    result = search_postal_code("tok-123", "560101", get_json_fn=fake_get)
+
+    assert result is not None
+    assert result.building_name == ""
+    assert result.address == ""
+    assert result.postal_code == "560101"
+    assert result.latitude == pytest.approx(1.37026158388486)
