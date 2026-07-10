@@ -13,11 +13,16 @@
     "forecast": {
       "root": "api/",
       "entrypoint": "forecast.py"
+    },
+    "geocode_postal": {
+      "root": "api/",
+      "entrypoint": "geocode_postal.py"
     }
   },
   "rewrites": [
     { "source": "/api/batch_predict", "destination": { "service": "batch_predict" } },
     { "source": "/api/forecast", "destination": { "service": "forecast" } },
+    { "source": "/api/geocode_postal", "destination": { "service": "geocode_postal" } },
     { "source": "/(.*)", "destination": { "service": "frontend" } }
   ]
 }

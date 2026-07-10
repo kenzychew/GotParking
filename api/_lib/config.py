@@ -78,12 +78,20 @@ class Settings:
             path segment) for the training job's healthchecks.io check.
             Reused here for batch predict's `/fail` pings -- see
             `healthchecks.py` for the reasoning and the exact scope.
+        onemap_email: OneMap account email (geocode_postal.py only). None if
+            unset -- unlike the required fields above, a missing OneMap
+            credential must not break /api/forecast or /api/batch_predict,
+            which don't use it; geocode_postal.py checks for None itself and
+            returns a typed error rather than this whole module hard-failing.
+        onemap_password: OneMap account password, same optionality as above.
     """
 
     supabase_url: str
     supabase_service_role_key: str
     batch_shared_secret: str
     healthchecks_training_ping_url: str | None
+    onemap_email: str | None
+    onemap_password: str | None
 
 
 def load_settings() -> Settings:
@@ -102,6 +110,8 @@ def load_settings() -> Settings:
     supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
     batch_secret = os.environ.get("BATCH_SHARED_SECRET", "").strip()
     healthchecks_url = os.environ.get("HEALTHCHECKS_TRAINING_PING_URL", "").strip() or None
+    onemap_email = os.environ.get("ONEMAP_EMAIL", "").strip() or None
+    onemap_password = os.environ.get("ONEMAP_PASSWORD", "").strip() or None
 
     required = {
         "SUPABASE_URL": supabase_url,
@@ -117,4 +127,6 @@ def load_settings() -> Settings:
         supabase_service_role_key=supabase_key,
         batch_shared_secret=batch_secret,
         healthchecks_training_ping_url=healthchecks_url,
+        onemap_email=onemap_email,
+        onemap_password=onemap_password,
     )
