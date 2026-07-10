@@ -100,6 +100,24 @@ class SeedListRegenError(ValueError):
     """Raised on any invalid input -- never write a partial or empty file after this."""
 
 
+def _title_case_building_name(value: str) -> str:
+    """Title-case an OneMap building name for display.
+
+    OneMap always returns BUILDINGNAME in upper case (its own convention, not a data
+    error) -- str.title() renders that legibly, then a follow-up pass lower-cases the
+    letter after an apostrophe (title() otherwise turns "KING GEORGE'S" into
+    "King George'S"). Only applied to OneMap-sourced names, never to the raw LTA `name`
+    (already correctly cased at the source).
+
+    Args:
+        value: A raw, upper-case OneMap building name.
+
+    Returns:
+        A title-cased version, e.g. "MARINA SQUARE" -> "Marina Square".
+    """
+    return re.sub(r"'(\w)", lambda m: "'" + m.group(1).lower(), value.title())
+
+
 @dataclass(frozen=True)
 class OnemapFields:
     """One carpark's OneMap enrichment (scripts/onemap_enrich.py), optional per field.
@@ -438,7 +456,8 @@ def render_frontend_seed_carparks_ts(
     lines = []
     for carpark_id, name in sorted_entries(combined):
         fields = onemap_data.get(carpark_id)
-        display_name = (fields.display_name if fields else None) or name
+        onemap_name = fields.display_name if fields else None
+        display_name = _title_case_building_name(onemap_name) if onemap_name else name
         parts = [
             f"id: {ts_string_literal(carpark_id)}",
             f"name: {ts_string_literal(name)}",

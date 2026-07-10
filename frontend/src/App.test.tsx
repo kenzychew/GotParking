@@ -77,9 +77,9 @@ describe("required test slice", () => {
     await wait(450);
     await selectViaSearch(user, "Marina Square", "Marina Square"); // id 2, count 1
     await wait(450);
-    await selectViaSearch(user, "Raffles City", "Raffles City"); // id 3, count 1
+    await selectViaSearch(user, "Raffles City", "Raffles City Tower"); // id 3, count 1
     await wait(450);
-    await selectViaSearch(user, "Cineleisure", "Cineleisure"); // id 11, count 1 (4th distinct pick)
+    await selectViaSearch(user, "Cineleisure", "Cathay Cineleisure Orchard"); // id 11, count 1 (4th distinct pick)
 
     const shortcuts = await screen.findByRole("region", { name: "Shortcuts" });
     const chipNames = within(shortcuts)
@@ -88,7 +88,7 @@ describe("required test slice", () => {
     // id 1 (count 2) wins outright; among the count=1 ties, most-recently
     // picked wins -- Cineleisure then Raffles City; Marina Square (picked
     // longest ago among the ties) is squeezed out of the 3-item cap.
-    expect(chipNames).toEqual(["Suntec City", "Cineleisure", "Raffles City"]);
+    expect(chipNames).toEqual(["Suntec City", "Cathay Cineleisure Orchard", "Raffles City Tower"]);
 
     view.unmount();
     render(<App />);
@@ -97,7 +97,11 @@ describe("required test slice", () => {
     const chipNamesAfterRemount = within(shortcutsAfterRemount)
       .getAllByRole("button")
       .map((button) => button.textContent);
-    expect(chipNamesAfterRemount).toEqual(["Suntec City", "Cineleisure", "Raffles City"]);
+    expect(chipNamesAfterRemount).toEqual([
+      "Suntec City",
+      "Cathay Cineleisure Orchard",
+      "Raffles City Tower",
+    ]);
   });
 
   it("network failure -> offline copy, retry works", async () => {
@@ -142,7 +146,7 @@ describe("required test slice", () => {
       screen.getAllByRole("button").map((button) => button.textContent),
     );
     for (const carpark of SEED_CARPARKS) {
-      expect(renderedNames.has(carpark.name)).toBe(true);
+      expect(renderedNames.has(carpark.displayName)).toBe(true);
     }
   });
 
@@ -185,7 +189,7 @@ describe("required test slice", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await selectViaSearch(user, "Raffles", "Raffles City");
+    await selectViaSearch(user, "Raffles", "Raffles City Tower");
 
     expect(await screen.findByText("Collecting data - check back in a few days")).toBeInTheDocument();
     expect(screen.getByText("50 lots available now")).toBeInTheDocument();
@@ -211,12 +215,12 @@ describe("required test slice", () => {
 
 describe("share link", () => {
   it("a valid ?carpark= id selects that carpark on load", async () => {
-    window.history.pushState({}, "", "/?carpark=16"); // VivoCity P3
+    window.history.pushState({}, "", "/?carpark=16"); // VivoCity P3, displayName "Vivocity"
     mockFetchAlwaysResolves(MOCK_FRESH_PAYLOAD);
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "VivoCity P3" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Vivocity" })).toBeInTheDocument();
   });
 
   it("an invalid/garbage ?carpark= id shows a clear error state, never a crash", async () => {

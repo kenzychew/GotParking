@@ -176,10 +176,29 @@ class TestOnemapEnrichmentRender:
         rendered = rsl.render_frontend_seed_carparks_ts(text, combined, onemap_data)
 
         assert 'name: "Suntec City"' in rendered
-        assert 'displayName: "SUNTEC SINGAPORE CONVENTION & EXHIBITION CENTRE"' in rendered
+        assert 'displayName: "Suntec Singapore Convention & Exhibition Centre"' in rendered
         assert 'postalCode: "039593"' in rendered
         assert "latitude: 1.2935" in rendered
         assert "longitude: 103.8572" in rendered
+
+    def test_onemap_display_name_is_title_cased_including_apostrophes(self) -> None:
+        """OneMap always returns BUILDINGNAME upper-case -- the render layer must
+        title-case it for display, and specifically must not mangle a possessive
+        apostrophe (str.title() alone turns "KING GEORGE'S" into "King George'S")."""
+        combined = {"5": "King George's Building"}
+        onemap_data = {
+            "5": rsl.OnemapFields(
+                display_name="KING GEORGE'S BUILDING",
+                postal_code=None,
+                latitude=None,
+                longitude=None,
+            )
+        }
+        text = "export const SEED_CARPARKS: readonly SeedCarpark[] = [\n\n];"
+
+        rendered = rsl.render_frontend_seed_carparks_ts(text, combined, onemap_data)
+
+        assert 'displayName: "King George\'s Building"' in rendered
 
     def test_unresolvable_carpark_falls_back_to_raw_name_never_fabricates(self) -> None:
         """The core "honest beats invented" guarantee, at the render layer: a carpark
