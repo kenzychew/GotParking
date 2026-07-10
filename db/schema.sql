@@ -41,12 +41,37 @@ create table if not exists public.carparks (
     -- excluded from the pooled training run until model_config.first_promotion_at
     -- is set (see model_config below).
     is_original_seed boolean not null default false,
+    -- OneMap enrichment (2026-07-10, scripts/onemap_enrich.py): coordinates come
+    -- from the LTA feed's own Location field (captured at enrichment time, not
+    -- re-derived); the onemap_* columns come from OneMap's reverse-geocode API
+    -- and are all nullable together -- a carpark OneMap can't resolve keeps
+    -- onemap_building_name null and the frontend falls back to `name` (honest
+    -- beats invented, never fabricate a friendlier name than the source data
+    -- supports). latitude/longitude also back the frontend's postal-code-search
+    -- distance sort.
+    latitude              double precision,
+    longitude             double precision,
+    onemap_building_name  text,
+    onemap_address        text,
+    onemap_postal_code    text,
+    onemap_enriched_at    timestamptz,
     created_at       timestamptz not null default now()
 );
 
 comment on table public.carparks is
     'Seed carpark whitelist (server-side canonical copy). Expansion beyond the '
     'initial 10 requires a fresh T1-style signal validation per carpark.';
+
+-- Idempotent migration for the OneMap columns against an ALREADY-EXISTING carparks
+-- table (this file's `create table if not exists` above only applies to a fresh
+-- install -- it does not ALTER a table that already exists, per standard Postgres
+-- semantics). Safe to re-run.
+alter table public.carparks add column if not exists latitude             double precision;
+alter table public.carparks add column if not exists longitude            double precision;
+alter table public.carparks add column if not exists onemap_building_name text;
+alter table public.carparks add column if not exists onemap_address       text;
+alter table public.carparks add column if not exists onemap_postal_code   text;
+alter table public.carparks add column if not exists onemap_enriched_at   timestamptz;
 
 -- ----------------------------------------------------------------------------
 -- 2) carpark_history -- every successful poll lands here
