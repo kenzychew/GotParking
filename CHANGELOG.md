@@ -3,7 +3,7 @@
 ## v0.2.0.0 - 2026-07-08
 
 Coverage grows from 10 to 24 Singapore malls — search any of them at
-https://gstack-playground.vercel.app and see its current lot count, same as before, now for
+https://gotparking.vercel.app and see its current lot count, same as before, now for
 more than double the malls.
 
 - **14 new malls verified and live**: Millenia Singapore, Orchard Point, The Heeren, Plaza
@@ -49,7 +49,7 @@ more than double the malls.
 ## v0.1.0.0 - 2026-07-06
 
 First complete, live version of the product. Search any of the 10 supported Singapore malls
-and see its current lot count and forecast state at https://gstack-playground.vercel.app —
+and see its current lot count and forecast state at https://gotparking.vercel.app —
 no login needed, works offline as an installable PWA.
 
 - **All four implementation lanes shipped and merged**: the Cloudflare Worker poller (live,

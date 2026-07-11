@@ -331,7 +331,12 @@ doc D7 / Premise #9 as amended).
 - [x] Record the production URL -> `VERCEL_PROD_URL` =
       `https://gstack-playground.vercel.app`. `BATCH_PREDICT_URL` =
       `https://gstack-playground.vercel.app/api/batch_predict` (T4 kept the
-      guessed path). Verified live: `GET /` returns the PWA shell (200);
+      guessed path). **Update 2026-07-11: project renamed to `gotparking`;
+      canonical URL is now `https://gotparking.vercel.app` and the poller's
+      `BATCH_PREDICT_URL` secret was re-put to
+      `https://gotparking.vercel.app/api/batch_predict`. The legacy
+      `gstack-playground.vercel.app` domain remains assigned and serving.**
+      Verified live: `GET /` returns the PWA shell (200);
       `GET /api/forecast` returns the typed 503 (`predictions_unavailable`)
       until Phase 6c wires the env vars -- exactly the designed
       missing-config behavior, and proof the function runs.
@@ -398,7 +403,9 @@ log).
 - [x] `BATCH_PREDICT_URL` = `<VERCEL_PROD_URL>` + the batch endpoint path --
       DONE 2026-07-05/06: value is
       `https://gstack-playground.vercel.app/api/batch_predict` (Phase 5
-      done), wired via `wrangler secret put BATCH_PREDICT_URL`.
+      done), wired via `wrangler secret put BATCH_PREDICT_URL`. Re-put on
+      2026-07-11 to `https://gotparking.vercel.app/api/batch_predict` after
+      the project rename.
 
 ### Phase 6b: GitHub Actions repository secrets (3) -- DONE 2026-07-06
 
@@ -545,9 +552,11 @@ them.
 7.  `HEALTHCHECKS_TRAINING_PING_URL` -- wired into: GitHub Actions. Consumed
     by: T5 (weekly completion ping, `/fail` on crash/upload failure).
 8.  `VERCEL_PROD_URL` -- `https://gstack-playground.vercel.app` (recorded
-    2026-07-05, Phase 5 done).
+    2026-07-05, Phase 5 done). Canonical URL is `https://gotparking.vercel.app`
+    since the 2026-07-11 project rename; the legacy domain still serves.
 9.  `BATCH_PREDICT_URL` -- `https://gstack-playground.vercel.app/api/batch_predict`
     -- DONE 2026-07-06: wired as the 6th and final Cloudflare Worker secret.
+    Re-put 2026-07-11 to `https://gotparking.vercel.app/api/batch_predict`.
 
 Platform state at hand-off (2026-07-06, T1.5 fully complete): GitHub repo
 `GotParking` pushed, all four lanes (T2-T6) merged to `main`; Supabase
@@ -557,7 +566,8 @@ pings every 5 minutes) and `gotparking-training` (PAUSED, live-verified
 2026-07-06 via a real forced-failure drill -- see TODOS.md) both created and
 tested; Cloudflare Worker `gotparking-poller` running the real T3 poller
 code live, cron `*/5 * * * *` confirmed, all 6 secrets wired; Vercel project
-`gstack-playground` live at `https://gstack-playground.vercel.app` via the
+`gstack-playground` (renamed `gotparking` on 2026-07-11, now canonical at
+`https://gotparking.vercel.app`) live at `https://gstack-playground.vercel.app` via the
 `services` model, `sin1` pinned, all 4 env vars set across all 3
 environments (3 from Phase 6c plus `HEALTHCHECKS_TRAINING_PING_URL`, added
 2026-07-06); GitHub Actions has all 3 of its repository secrets set. Every

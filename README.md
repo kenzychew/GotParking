@@ -32,7 +32,8 @@ verified live.
 **Provisioning (T1.5) is fully complete** — every phase, every platform, every secret. The
 poller is **live** at `https://gotparking-poller.kenzychew.workers.dev` (cron confirmed every
 5 minutes, all 6 secrets wired) and the site is **live** at
-`https://gstack-playground.vercel.app` (independently re-verified: `200` on `/`, and
+`https://gotparking.vercel.app` (renamed from `gstack-playground.vercel.app` on 2026-07-11;
+the legacy domain still serves — independently re-verified: `200` on `/`, and
 `/api/forecast` now also returns `200` — the poller/batch-predict pipeline has run long enough
 that `carpark_forecast` holds real rows for all 24 carparks (see
 [Coverage Expansion](#coverage-expansion) below), each still in the designed `cold_start` state

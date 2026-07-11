@@ -39,10 +39,12 @@ single-URL health-check model only fits the first; the other two are documented
 here so they aren't silently dropped, but are NOT automated by /land-and-deploy.
 
 - Platform: Vercel (primary — the only surface /land-and-deploy manages)
-- Production URL: `https://gstack-playground.vercel.app` (Vercel project
-  `gstack-playground`, named after the local folder rather than `gotparking`;
-  live since 2026-07-05 after the services-model migration in `vercel.json` —
-  see README and `docs/provisioning-checklist.md` Phase 5 for the story)
+- Production URL: `https://gotparking.vercel.app` (Vercel project `gotparking`,
+  renamed from `gstack-playground` on 2026-07-11; the legacy domain
+  `https://gstack-playground.vercel.app` is still assigned to the project and
+  serves identically, so old links keep working — live since 2026-07-05 after
+  the services-model migration in `vercel.json`; see README and
+  `docs/provisioning-checklist.md` Phase 5 for the story)
 - Deploy workflow: auto-deploy on push to `main` (Vercel's default GitHub
   integration — no explicit GitHub Actions workflow needed for this surface);
   `npx vercel --prod` from the repo root deploys the local tree directly
@@ -50,11 +52,12 @@ here so they aren't silently dropped, but are NOT automated by /land-and-deploy.
 - Merge method: N/A — this repo commits straight to `main` (solo project, no PR
   flow yet; see the design doc's Distribution Plan)
 - Project type: web app (PWA frontend) + its serving API, one combined Vercel
-  project using the `services` model in `vercel.json`: three services
-  (`frontend` rooted at `frontend/`; `batch_predict` and `forecast` each
-  rooted at `api/` with file-form Python entrypoints), top-level rewrites
-  exposing them at `/api/batch_predict`, `/api/forecast`, and `/(.*)`;
-  `regions: ["sin1"]` stays top-level and applies to both Python services.
+  project using the `services` model in `vercel.json`: four services
+  (`frontend` rooted at `frontend/`; `batch_predict`, `forecast`, and
+  `geocode_postal` each rooted at `api/` with file-form Python entrypoints),
+  top-level rewrites exposing them at `/api/batch_predict`, `/api/forecast`,
+  `/api/geocode_postal`, and `/(.*)`; `regions: ["sin1"]` stays top-level and
+  applies to the Python services.
   Python deps come from `api/requirements.txt`; the `batch_predict` service
   has a `buildCommand` that copies `libgomp.so.1` into `lib/` (lightgbm's
   wheel does not bundle it and the function runtime image lacks it)
