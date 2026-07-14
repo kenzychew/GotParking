@@ -97,7 +97,10 @@ comment on table public.carpark_history is
 -- The daily refresh_carpark_baseline() aggregation (section 3) filters on
 -- polled_at alone; the composite PK (carpark_id, polled_at) cannot serve a
 -- bare time-range scan, so without this index the nightly run seq-scans an
--- ever-growing table.
+-- ever-growing table. On the live database this index is built plain, not
+-- CONCURRENTLY (unavailable inside the SQL Editor's transaction), so the
+-- build briefly locks writes on carpark_history; a poll cycle landing in
+-- that window fails and self-heals next tick.
 create index if not exists carpark_history_polled_at_idx
     on public.carpark_history (polled_at);
 
@@ -193,7 +196,12 @@ comment on table public.carpark_baseline is
 -- seed list and later re-added can never serve a months-frozen average. The
 -- ORDER BY in the insert gives concurrent runs (a retry, or a manual backfill
 -- colliding with the daily tick) a deterministic lock order so they cannot
--- deadlock. If the Supabase role-level statement timeout ever bites at steady
+-- deadlock on the upsert path. The prune DELETE above has no equivalent
+-- orderable lock path, so two truly concurrent runs can still theoretically
+-- deadlock via delete-vs-upsert interleaving; the no-retry-on-timeout client
+-- plus once-daily cadence makes this vanishingly rare, and a deadlocked run
+-- just aborts (fail ping) and retries next tick.
+-- If the Supabase role-level statement timeout ever bites at steady
 -- state (~2.2M scanned rows), fall back to per-carpark batching -- do not build
 -- that until it is actually needed. Returns the upserted row count so the poller
 -- has a number to log (expect ~180k at steady state: carparks x 7 dow x 96 slots).
@@ -255,6 +263,11 @@ comment on function public.refresh_carpark_baseline is
     '28 days of carpark_history (upsert + prune, so the table is a pure window '
     'projection). Called by the poller cron via /rpc/ and manually for backfills. '
     'Returns the upserted row count.';
+
+-- Revoked here too (also in section 8, idempotent) so a partial or
+-- non-transactional apply of this script never leaves the default PUBLIC
+-- EXECUTE grant live even for seconds.
+revoke execute on function public.refresh_carpark_baseline from public, anon, authenticated;
 
 -- ----------------------------------------------------------------------------
 -- 4) carpark_momentum -- poller-written rate-of-change inputs (Premises #2/#11)

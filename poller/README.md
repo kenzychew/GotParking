@@ -23,7 +23,7 @@ warning and does not fail the poll cycle -- forecast staleness is surfaced elsew
 
 The worker's `scheduled` handler dispatches on `controller.cron`, so a single Worker runs both crons defined in `wrangler.toml`'s `[triggers]` array.
 `POLL_CRON` (`*/5 * * * *`) runs the poll cycle described above.
-`BASELINE_REFRESH_CRON` (`15 19 * * *`, which is 19:15 UTC == 03:15 SGT) runs `runBaselineRefresh`, a single `POST` to the `refresh_carpark_baseline` RPC with a `{}` body (the RPC takes no arguments).
+`BASELINE_REFRESH_CRON` (`17 19 * * *`, which is 19:17 UTC == 03:17 SGT) runs `runBaselineRefresh`, a single `POST` to the `refresh_carpark_baseline` RPC with a `{}` body (the RPC takes no arguments).
 An unrecognized cron string falls back to the poll cycle and logs `unknown_cron`, so a drifted `wrangler.toml` cannot silently drop the baseline refresh.
 `test/wranglerConfig.test.ts` pins `wrangler.toml`'s `crons` array to the `POLL_CRON` and `BASELINE_REFRESH_CRON` exported constants, so the two files cannot drift apart.
 
@@ -36,7 +36,7 @@ This is a separate healthchecks.io check from the poller's own 5-minute `HEALTHC
 
 Failure semantics: every failure inside `runBaselineRefresh` (a rejected RPC call, a non-JSON response body, anything) is caught, logged as `baseline_refresh_failed`, and `/fail`-pings the baseline check only.
 `runBaselineRefresh` never throws out of the handler and never touches the poller check.
-Because the refresh runs once a day, a failed run is not retried within the same day; the next day's 03:15 SGT tick retries naturally.
+Because the refresh runs once a day, a failed run is not retried within the same day; the next day's 03:17 SGT tick retries naturally.
 
 ## Commands
 

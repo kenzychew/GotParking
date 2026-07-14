@@ -29,7 +29,7 @@ export const LTA_ENDPOINT =
 // Must byte-match wrangler.toml's [triggers] crons array -- pinned by
 // test/wranglerConfig.test.ts.
 export const POLL_CRON = "*/5 * * * *";
-export const BASELINE_REFRESH_CRON = "15 19 * * *";
+export const BASELINE_REFRESH_CRON = "17 19 * * *";
 
 const FETCH_TIMEOUT_MS = 10_000;
 // The baseline refresh runs one aggregate RPC over 28 days of history, so it

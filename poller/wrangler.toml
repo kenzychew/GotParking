@@ -9,11 +9,12 @@ compatibility_date = "2026-06-01"
 # Two triggers:
 #   */5 * * * *   poll every 5 minutes (Premise #9; 288 LTA calls/day vs the
 #                 10M/day ceiling)
-#   15 19 * * *   19:15 UTC == 03:15 SGT: daily carpark_baseline refresh
-#                 (Premise #11), off-peak and offset from the 5-minute ticks
-#                 so it never lands on one
+#   17 19 * * *   19:17 UTC == 03:17 SGT: daily carpark_baseline refresh
+#                 (Premise #11), chosen off-peak AND deliberately off the
+#                 */5 grid so the daily aggregate never runs concurrently
+#                 with a poll cycle (19:15 would collide)
 [triggers]
-crons = ["*/5 * * * *", "15 19 * * *"]
+crons = ["*/5 * * * *", "17 19 * * *"]
 
 # Persist worker logs so the "poller silent" runbook has something to read.
 [observability]
@@ -34,7 +35,7 @@ enabled = true
 #   HEALTHCHECKS_BASELINE_PING_URL (OPTIONAL) healthchecks.io ping URL for the
 #                                daily carpark_baseline refresh check -- give
 #                                it a daily schedule + grace period on
-#                                healthchecks.io, matching the 19:15 UTC cron.
+#                                healthchecks.io, matching the 19:17 UTC cron.
 #                                Deliberately a SEPARATE check from
 #                                HEALTHCHECKS_POLLER_PING_URL: the poller
 #                                check's signal is the 5-minute cadence, and a

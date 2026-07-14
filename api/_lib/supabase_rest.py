@@ -276,10 +276,13 @@ class SupabaseREST:
         """Select every row matching ``params``, paginating as needed.
 
         PostgREST (and Supabase's hosted config) commonly caps the rows
-        returned per request; tables that can grow past that cap (e.g.
-        `carpark_baseline`, which can hold `carparks x 7 dow x 96 slots`
-        rows once the bootstrap window has elapsed) must page through
-        results rather than silently truncating.
+        returned per request; any table that can grow past that cap must
+        page through results rather than silently truncating. No
+        production caller needs this today -- the `carpark_baseline`
+        read, once the motivating example, is now filtered server-side
+        to a single (dow, slot) slice via the non-paginated `select`
+        instead -- but this stays as test-covered infrastructure for
+        any future read that outgrows the page cap.
 
         Args:
             table: Table name.
