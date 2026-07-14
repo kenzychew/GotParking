@@ -11,6 +11,9 @@ import { SEED_CARPARK_ID_LIST } from "../../src/carparks";
 export const DEFAULT_SUPABASE_URL = "https://example.supabase.co";
 export const DEFAULT_HEALTHCHECKS_URL = "https://hc-ping.test/abc-uuid";
 export const DEFAULT_BATCH_PREDICT_URL = "https://batch.example.test/predict";
+// Distinct host/path from DEFAULT_HEALTHCHECKS_URL so tests can never
+// conflate a poller-check ping with a baseline-check ping.
+export const DEFAULT_BASELINE_HEALTHCHECKS_URL = "https://hc-ping-baseline.test/xyz-uuid";
 
 export function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
@@ -20,6 +23,7 @@ export function makeEnv(overrides: Partial<Env> = {}): Env {
     HEALTHCHECKS_POLLER_PING_URL: DEFAULT_HEALTHCHECKS_URL,
     BATCH_PREDICT_URL: DEFAULT_BATCH_PREDICT_URL,
     BATCH_SHARED_SECRET: "test-batch-secret",
+    HEALTHCHECKS_BASELINE_PING_URL: DEFAULT_BASELINE_HEALTHCHECKS_URL,
     ...overrides,
   };
 }
@@ -135,9 +139,16 @@ export function buildBaseRouter(env: Env, options: BaseRouterOptions = {}): Fetc
     () => jsonResponse(momentumHistory),
   );
   router.onUrl(`${env.SUPABASE_URL}/rest/v1/carpark_momentum`, "POST", () => okResponse(200));
+  router.onUrl(`${env.SUPABASE_URL}/rest/v1/rpc/refresh_carpark_baseline`, "POST", () =>
+    jsonResponse(123),
+  );
   if (env.HEALTHCHECKS_POLLER_PING_URL) {
     router.onUrl(env.HEALTHCHECKS_POLLER_PING_URL, "GET", () => okResponse(200));
     router.onUrl(`${env.HEALTHCHECKS_POLLER_PING_URL}/fail`, "POST", () => okResponse(200));
+  }
+  if (env.HEALTHCHECKS_BASELINE_PING_URL) {
+    router.onUrl(env.HEALTHCHECKS_BASELINE_PING_URL, "GET", () => okResponse(200));
+    router.onUrl(`${env.HEALTHCHECKS_BASELINE_PING_URL}/fail`, "POST", () => okResponse(200));
   }
   if (env.BATCH_PREDICT_URL) {
     router.onUrl(env.BATCH_PREDICT_URL, "POST", () => okResponse(200));
