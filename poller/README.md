@@ -19,6 +19,15 @@ idempotent writes (`carpark_history`'s composite PK makes a re-poll of the same 
 no-op, not a duplicate); and a non-fatal batch-predict trigger (a failed trigger logs a
 warning and does not fail the poll cycle -- forecast staleness is surfaced elsewhere).
 
+The momentum read pages through the 65-minute history window in 1000-row chunks
+(`limit`/`offset`, ascending `polled_at,carpark_id` order so concurrent inserts cannot
+shift earlier pages). PostgREST silently truncates any single response at the server's
+`max-rows` (Supabase default 1000) -- found live 2026-07-15: at 268 carparks the
+unpaginated read got only the newest ~15 minutes, every carpark's 30m/60m offsets were
+null, and the promoted model never served. A 20-page backstop warns
+(`momentum_history_page_cap`) instead of looping forever; see
+`test/momentumPagination.test.ts`.
+
 ## Daily baseline refresh
 
 The worker's `scheduled` handler dispatches on `controller.cron`, so a single Worker runs both crons defined in `wrangler.toml`'s `[triggers]` array.
@@ -48,6 +57,6 @@ npm run typecheck           # tsc --noEmit
 npm run deploy               # wrangler deploy
 ```
 
-Test framework: Vitest, 54/54 passing across 7 test files.
+Test framework: Vitest, 58/58 passing across 8 test files.
 
 Design doc: `~/.gstack/projects/gstack-playground/kenzy-unknown-design-20260702-210951.md`

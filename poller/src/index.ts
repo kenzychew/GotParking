@@ -306,29 +306,61 @@ async function writeHistory(env: Env, rows: readonly HistoryInsertRow[]): Promis
   logEvent("info", "history_written", { rows: rows.length });
 }
 
+// PostgREST silently truncates any response at the server's max-rows setting
+// (Supabase default: 1000 rows) -- a limit above it in the query does NOT
+// raise the ceiling, only offset pagination gets past it. Found live
+// 2026-07-15: at 268 carparks the 65-minute lookback holds ~3,500 rows, so
+// the unpaginated read returned only the newest ~15 minutes, every carpark's
+// lots_30m_ago/lots_60m_ago stayed null, and the promoted model never served
+// (batch-predict's momentum-usable gate failed for all 268).
+const MOMENTUM_PAGE_SIZE = 1000;
+// 20 pages = 20k rows, far above any sane 65-minute window (268 carparks x 13
+// polls is ~3.5k) -- purely a runaway-loop backstop, warned on if ever hit.
+const MOMENTUM_MAX_PAGES = 20;
+
+async function fetchMomentumHistory(env: Env, sinceIso: string): Promise<HistoryRow[]> {
+  const history: HistoryRow[] = [];
+  for (let page = 0; ; page++) {
+    if (page >= MOMENTUM_MAX_PAGES) {
+      logEvent("warn", "momentum_history_page_cap", {
+        pages: MOMENTUM_MAX_PAGES,
+        rows: history.length,
+      });
+      break;
+    }
+    // Ascending with a carpark_id tiebreak: fully deterministic order, and
+    // rows written between page fetches land at the tail of the ordering, so
+    // they can never shift earlier pages' offsets underneath the loop.
+    const query = [
+      "select=carpark_id,polled_at,available_lots",
+      `polled_at=gte.${sinceIso}`,
+      `carpark_id=in.(${SEED_CARPARK_ID_LIST.join(",")})`,
+      "order=polled_at.asc,carpark_id.asc",
+      `limit=${MOMENTUM_PAGE_SIZE}`,
+      `offset=${page * MOMENTUM_PAGE_SIZE}`,
+    ].join("&");
+    const response = await supabaseFetch(env, {
+      method: "GET",
+      path: `/rest/v1/carpark_history?${query}`,
+      context: "momentum_read",
+      failReason: "MOMENTUM_UPDATE_FAILED",
+    });
+    const payload: unknown = await response.json();
+    if (!Array.isArray(payload)) {
+      logEvent("warn", "momentum_history_shape", { payloadType: typeof payload, page });
+      break;
+    }
+    history.push(...(payload as HistoryRow[]));
+    if (payload.length < MOMENTUM_PAGE_SIZE) {
+      break;
+    }
+  }
+  return history;
+}
+
 async function updateMomentum(env: Env, now: Date): Promise<void> {
   const sinceIso = new Date(now.getTime() - HISTORY_LOOKBACK_MINUTES * 60_000).toISOString();
-  const query = [
-    "select=carpark_id,polled_at,available_lots",
-    `polled_at=gte.${sinceIso}`,
-    `carpark_id=in.(${SEED_CARPARK_ID_LIST.join(",")})`,
-    "order=polled_at.desc",
-  ].join("&");
-  const response = await supabaseFetch(env, {
-    method: "GET",
-    path: `/rest/v1/carpark_history?${query}`,
-    context: "momentum_read",
-    failReason: "MOMENTUM_UPDATE_FAILED",
-  });
-
-  const payload: unknown = await response.json();
-  let history: HistoryRow[];
-  if (Array.isArray(payload)) {
-    history = payload as HistoryRow[];
-  } else {
-    logEvent("warn", "momentum_history_shape", { payloadType: typeof payload });
-    history = [];
-  }
+  const history = await fetchMomentumHistory(env, sinceIso);
 
   const updatedAtIso = now.toISOString();
   const momentumRows = computeMomentum(history, SEED_CARPARK_ID_LIST, now).map((values) => ({
