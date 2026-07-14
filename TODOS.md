@@ -41,6 +41,50 @@ across other Workers.
 **Priority:** P4
 **Depends on:** None
 
+### CI deploy workflow for the poller (wrangler deploy on poller/** changes)
+
+**What:** A GitHub Actions workflow that runs `wrangler deploy` from `poller/` on pushes to
+`main` touching `poller/**` (requires a `CLOUDFLARE_API_TOKEN` repo secret; ~20 lines,
+`cloudflare/wrangler-action` or plain `npx wrangler deploy`).
+
+**Why:** The poller is the only deploy surface with zero automation (CLAUDE.md's deploy
+section already calls this "a real gap"). The carpark_baseline daily-refresh plan
+(eng-reviewed 2026-07-11) raises the cost of forgetting: a merged-but-undeployed poller now
+means the baseline refresh silently never starts running -- the dedicated healthchecks check
+added by that plan catches it, but a day-plus later in production instead of never happening.
+
+**Context:** Second time this gap has been flagged (first: CLAUDE.md's "Other deploy
+surfaces" note). `poller/wrangler.toml` is complete; secrets stay in Cloudflare (set via
+`wrangler secret put`), so the workflow only needs the API token, not the six runtime
+bindings.
+
+**Effort:** S (~20-line workflow + one repo secret)
+**Priority:** P2
+**Depends on:** None
+
+### Read the first training run's comparator MAEs; decide the baseline's fate
+
+**What:** After the first weekly training run completes (schedule: Sat 21:00 UTC = Sun
+05:00 SGT; first eligible run 2026-07-12), read the `training_runs` row and compare
+`mae_baseline` vs `mae_persistence`. If persistence wins decisively, open a follow-up for
+the anchored-delta baseline refinement (`live + (avg[target_slot] - avg[current_slot])`)
+instead of the raw dow/slot average.
+
+**Why:** The 2026-07-11 eng review's outside voice argued a dow/slot mean built from ~1-4
+weeks of samples may forecast WORSE than persistence at a 20-minute horizon -- i.e. the
+baseline fix ships visibly-different but possibly less-accurate numbers. Resolved: ship the
+fix and let the training job's own holdout instrumentation answer the accuracy question,
+rather than speculating. This entry is the follow-through so that decision actually happens.
+
+**Context:** `training_runs` (db/schema.sql) stores `mae_baseline` and `mae_persistence`
+per weekly cycle; MAE-vs-persistence is the design's tracked demo-facing metric (D8).
+Related: the "backtest report from a completed first training run" idea referenced under
+the coverage-expansion entry's trigger condition.
+
+**Effort:** S (~10 min: read one table row, decide)
+**Priority:** P2
+**Depends on:** First weekly training run having completed.
+
 ### Batch-predict alerting reuses the training check (imprecise, but now present)
 
 **What:** Provision a dedicated healthchecks.io check (e.g. `gotparking-batch-predict`, ~10
