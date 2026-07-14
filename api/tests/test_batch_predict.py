@@ -25,6 +25,7 @@ from _lib.batch_logic import (
     STATE_BASELINE,
     STATE_COLD_START,
     STATE_ML,
+    _load_baseline,
     _load_history_stats,
     handle_batch_predict,
     run_batch_predict,
@@ -146,8 +147,9 @@ class TestMixedStates:
             "11", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
             capacity=150, live_lots=90,
         )
-        # Carpark "13": baseline via MISSING momentum row + missing baseline
-        # cell -> persistence (live_lots) fallback.
+        # Carpark "13": baseline via MISSING momentum row + a baseline cell
+        # for a DIFFERENT (dow, slot) only -> persistence (live_lots)
+        # fallback.
         history += make_history_rows(
             "13", 500, NOW - timedelta(days=30), NOW - timedelta(minutes=5),
             capacity=140, live_lots=10,
@@ -183,7 +185,16 @@ class TestMixedStates:
                         "slot_of_day": TARGET_SLOT,
                         "avg_available_lots": 82.0,
                     },
-                    # "13" has no baseline cell for (dow, slot) -> persistence.
+                    # "13" has a baseline row, but NOT for the target (dow,
+                    # slot) -> must still fall back to persistence, proving
+                    # a present-but-wrong-slot cell is excluded, not just an
+                    # entirely-absent carpark_id.
+                    {
+                        "carpark_id": "13",
+                        "dow": (TARGET_DOW + 1) % 7,
+                        "slot_of_day": TARGET_SLOT,
+                        "avg_available_lots": 777.0,
+                    },
                 ],
             },
             storage={"models/v1.txt": model_bytes},
@@ -219,7 +230,9 @@ class TestMixedStates:
         assert written["11"]["forecast_lots"] == 82  # from carpark_baseline, stale momentum ignored
 
         assert written["13"]["state"] == STATE_BASELINE
-        assert written["13"]["forecast_lots"] == 10  # persistence: no baseline cell, no momentum
+        # persistence: baseline cell present but for a different (dow, slot)
+        # -> excluded, no momentum either.
+        assert written["13"]["forecast_lots"] == 10
 
         assert result.generated_at == NOW.isoformat()
 
@@ -783,3 +796,91 @@ class TestLoadHistoryStatsTimeBound:
         assert stats["1"].first_polled_at is not None
         age_hours = (NOW - stats["1"].first_polled_at).total_seconds() / 3600
         assert age_hours >= COLD_START_MIN_AGE_HOURS  # still correctly "old enough"
+
+
+class TestLoadBaseline:
+    """T7 (2026-07-14): `_load_baseline` was narrowed from an unfiltered,
+    paginated `select_all` over every (dow, slot) cell for the requested
+    carparks to a single filtered, non-paginated `select` for just the
+    target (dow, slot) -- the only cell `run_batch_predict` ever looks up
+    per carpark. Once `carpark_baseline` is fully populated
+    (`carparks x 7 dow x 96 slots` rows), the old shape meant ~150-180
+    sequential paginated GETs every 5-minute cycle; these tests pin the new
+    request shape directly rather than only asserting the resulting value."""
+
+    def test_select_is_filtered_by_dow_and_slot_not_paginated(self) -> None:
+        db = FakeSupabaseDB(
+            tables={
+                "carpark_baseline": [
+                    {
+                        "carpark_id": "3",
+                        "dow": TARGET_DOW,
+                        "slot_of_day": TARGET_SLOT,
+                        "avg_available_lots": 199.0,
+                    },
+                ],
+            }
+        )
+
+        baseline = _load_baseline(db, ["3", "11"], TARGET_DOW, TARGET_SLOT)
+
+        # The non-paginated select was used -- never select_all.
+        assert db.select_all_calls == []
+        assert len(db.select_calls) == 1
+        table, params = db.select_calls[0]
+        assert table == "carpark_baseline"
+        assert params["select"] == "carpark_id,avg_available_lots"
+        assert params["carpark_id"] == "in.(3,11)"
+        assert params["dow"] == f"eq.{TARGET_DOW}"
+        assert params["slot_of_day"] == f"eq.{TARGET_SLOT}"
+
+        assert baseline == {"3": 199.0}
+
+    def test_row_for_a_different_dow_or_slot_is_excluded(self) -> None:
+        db = FakeSupabaseDB(
+            tables={
+                "carpark_baseline": [
+                    # Correct carpark, wrong dow.
+                    {
+                        "carpark_id": "3",
+                        "dow": (TARGET_DOW + 1) % 7,
+                        "slot_of_day": TARGET_SLOT,
+                        "avg_available_lots": 500.0,
+                    },
+                    # Correct carpark, wrong slot.
+                    {
+                        "carpark_id": "3",
+                        "dow": TARGET_DOW,
+                        "slot_of_day": TARGET_SLOT + 1,
+                        "avg_available_lots": 999.0,
+                    },
+                    # Correct carpark and (dow, slot) -- the only one that
+                    # should come back.
+                    {
+                        "carpark_id": "3",
+                        "dow": TARGET_DOW,
+                        "slot_of_day": TARGET_SLOT,
+                        "avg_available_lots": 199.0,
+                    },
+                ],
+            }
+        )
+
+        baseline = _load_baseline(db, ["3"], TARGET_DOW, TARGET_SLOT)
+
+        assert baseline == {"3": 199.0}
+
+    def test_missing_cell_is_simply_absent_from_the_result(self) -> None:
+        db = FakeSupabaseDB(tables={"carpark_baseline": []})
+
+        baseline = _load_baseline(db, ["3"], TARGET_DOW, TARGET_SLOT)
+
+        assert baseline == {}
+
+    def test_no_carpark_ids_returns_empty_dict_and_makes_no_call(self) -> None:
+        db = FakeSupabaseDB(tables={"carpark_baseline": []})
+
+        baseline = _load_baseline(db, [], TARGET_DOW, TARGET_SLOT)
+
+        assert baseline == {}
+        assert db.select_calls == []

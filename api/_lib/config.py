@@ -48,9 +48,11 @@ TIER_PLENTY_RATIO = 0.30
 TIER_LIMITED_RATIO = 0.10
 
 #: PostgREST page size used when paginating tables that can exceed the
-#: server's default max-rows-per-request. `carpark_baseline` can hold up to
-#: (carparks x 7 dow x 96 slots) rows once the bootstrap window has elapsed,
-#: which is well past PostgREST's common 1000-row default cap.
+#: server's default max-rows-per-request. `select_all` (the paginated
+#: reader this constant defaults for) has no production caller today --
+#: the `carpark_baseline` read is now filtered to a single (dow, slot)
+#: slice via the non-paginated `select` -- but it stays as test-covered
+#: infrastructure for any future large read that needs it.
 POSTGREST_PAGE_SIZE = 1000
 
 #: Supabase Storage bucket holding LightGBM model artifacts (see

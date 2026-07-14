@@ -11,6 +11,14 @@ table's daily aggregation spans the entire history including the holdout
 window, and reading it here would hand the incumbent an in-sample
 advantage that could block promotion indefinitely (Test Requirements
 case 6: "comparator recomputed pre-holdout only").
+
+Pinned note: the serving-side baseline (`carpark_baseline`, rebuilt daily by
+`refresh_carpark_baseline()` from the trailing 28 days, falling back to the
+live lot count when a cell is absent) DELIBERATELY diverges from this
+module's comparator (all pre-holdout rows, carpark-mean fallback). The
+comparator must stay leakage-free and stable across the whole backtest
+window, while serving must stay seasonally fresh; do not "unify" them --
+the divergence is by design (eng review 2026-07-11).
 """
 
 from __future__ import annotations

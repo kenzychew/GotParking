@@ -9,7 +9,10 @@
 -- Time semantics (design doc D3): every timestamp column is timestamptz and
 -- stores UTC. All time-derived features (time slots, day-of-week, holidays)
 -- are computed in Asia/Singapore by application code via the shared SGT
--- helpers -- NEVER by SQL date functions on these columns.
+-- helpers -- NEVER by SQL date functions on these columns. Exception:
+-- refresh_carpark_baseline() in section 3 converts to SGT in SQL by design,
+-- because Premise #11 requires the daily aggregation to happen inside
+-- Postgres rather than shipping the history table over the wire.
 --
 -- Security (design doc, Security section): RLS is enabled on every table with
 -- NO policies -- deny-by-default for the anon and authenticated roles. The
@@ -91,6 +94,16 @@ comment on table public.carpark_history is
     'training data, baselines, and the cold-start sample count (Premise #10 '
     'counts THESE rows only -- never SINPA pretraining data).';
 
+-- The daily refresh_carpark_baseline() aggregation (section 3) filters on
+-- polled_at alone; the composite PK (carpark_id, polled_at) cannot serve a
+-- bare time-range scan, so without this index the nightly run seq-scans an
+-- ever-growing table. On the live database this index is built plain, not
+-- CONCURRENTLY (unavailable inside the SQL Editor's transaction), so the
+-- build briefly locks writes on carpark_history; a poll cycle landing in
+-- that window fails and self-heals next tick.
+create index if not exists carpark_history_polled_at_idx
+    on public.carpark_history (polled_at);
+
 -- carpark_history_stats: server-side aggregation for batch_predict's per-cycle read
 -- (2026-07-10, replacing a client-side fetch-every-raw-row approach). Found live: at 268
 -- carparks, fetching every carpark_history row within even a bounded time window still
@@ -157,6 +170,104 @@ comment on table public.carpark_baseline is
     'never aggregates the growing history table (Premise #11). Slots are SGT. '
     'NOTE (D6): promotion backtests must NOT read this table -- the training '
     'job recomputes a leakage-free comparator from pre-holdout data.';
+
+-- refresh_carpark_baseline: the daily aggregation job behind Premise #11 -- rebuilds
+-- the baseline table from the trailing 28 days of carpark_history. Called once per
+-- day (03:17 SGT) by the poller worker via PostgREST /rpc/, and manually for
+-- backfills. Mirrors carpark_history_stats's conventions (language sql, security
+-- invoker, revoke-execute in section 8) but is VOLATILE (the default -- not stable)
+-- because it writes.
+--
+-- Sanctioned D3 exception: the schema header forbids SGT conversion in SQL; doing
+-- the aggregation in Postgres is the entire point of Premise #11 (never ship the
+-- growing history table over the wire), so this function converts in SQL by design.
+-- Equivalence with the app helpers is pinned: Singapore is fixed UTC+8 with no DST;
+-- extract(isodow) - 1 yields 0=Monday..6=Sunday, matching poller/src/sgt.ts's
+-- (getUTCDay()+6)%7 and the Python twin; hour*4 + minute/15 uses ::int operands so
+-- the division truncates, matching Math.floor / Python //. Boundary minutes
+-- (0, 7, 8, 14, 15) are spot-checked against the helpers as an operator
+-- verification step after backfill.
+--
+-- 28-day rolling window: bounded aggregation input regardless of table growth
+-- (the polled_at index in section 2 bounds the scan), seasonally fresh, and
+-- comfortably above the ~9-samples-per-cell density the table comment targets.
+-- The delete CTE prunes cells with zero samples in the window, so the table is
+-- always a pure projection of the trailing 28 days -- a carpark removed from the
+-- seed list and later re-added can never serve a months-frozen average. The
+-- ORDER BY in the insert gives concurrent runs (a retry, or a manual backfill
+-- colliding with the daily tick) a deterministic lock order so they cannot
+-- deadlock on the upsert path. The prune DELETE above has no equivalent
+-- orderable lock path, so two truly concurrent runs can still theoretically
+-- deadlock via delete-vs-upsert interleaving; the no-retry-on-timeout client
+-- plus once-daily cadence makes this vanishingly rare, and a deadlocked run
+-- just aborts (fail ping) and retries next tick.
+-- If the Supabase role-level statement timeout ever bites at steady
+-- state (~2.2M scanned rows), fall back to per-carpark batching -- do not build
+-- that until it is actually needed. Returns the upserted row count so the poller
+-- has a number to log (expect ~180k at steady state: carparks x 7 dow x 96 slots).
+create or replace function public.refresh_carpark_baseline()
+returns integer
+language sql
+security invoker
+as $$
+    with slotted as (
+        select
+            carpark_id,
+            (extract(isodow from polled_at at time zone 'Asia/Singapore')::int - 1)::smallint
+                as dow,
+            (extract(hour from polled_at at time zone 'Asia/Singapore')::int * 4
+             + extract(minute from polled_at at time zone 'Asia/Singapore')::int / 15)::smallint
+                as slot_of_day,
+            available_lots
+        from public.carpark_history
+        where polled_at >= now() - interval '28 days'
+    ),
+    aggregated as (
+        select
+            carpark_id,
+            dow,
+            slot_of_day,
+            avg(available_lots) as avg_available_lots,
+            count(*) as sample_count
+        from slotted
+        group by carpark_id, dow, slot_of_day
+    ),
+    pruned as (
+        delete from public.carpark_baseline b
+        where not exists (
+            select 1
+            from aggregated a
+            where a.carpark_id = b.carpark_id
+              and a.dow = b.dow
+              and a.slot_of_day = b.slot_of_day
+        )
+        returning 1
+    ),
+    upserted as (
+        insert into public.carpark_baseline
+            (carpark_id, dow, slot_of_day, avg_available_lots, sample_count, updated_at)
+        select carpark_id, dow, slot_of_day, avg_available_lots, sample_count, now()
+        from aggregated
+        order by carpark_id, dow, slot_of_day
+        on conflict (carpark_id, dow, slot_of_day) do update
+            set avg_available_lots = excluded.avg_available_lots,
+                sample_count       = excluded.sample_count,
+                updated_at         = excluded.updated_at
+        returning 1
+    )
+    select count(*)::integer from upserted;
+$$;
+
+comment on function public.refresh_carpark_baseline is
+    'Daily Premise #11 aggregation: rebuilds carpark_baseline from the trailing '
+    '28 days of carpark_history (upsert + prune, so the table is a pure window '
+    'projection). Called by the poller cron via /rpc/ and manually for backfills. '
+    'Returns the upserted row count.';
+
+-- Revoked here too (also in section 8, idempotent) so a partial or
+-- non-transactional apply of this script never leaves the default PUBLIC
+-- EXECUTE grant live even for seconds.
+revoke execute on function public.refresh_carpark_baseline from public, anon, authenticated;
 
 -- ----------------------------------------------------------------------------
 -- 4) carpark_momentum -- poller-written rate-of-change inputs (Premises #2/#11)
@@ -268,10 +379,13 @@ revoke all on table public.carpark_forecast from anon, authenticated;
 revoke all on table public.model_config     from anon, authenticated;
 revoke all on table public.training_runs    from anon, authenticated;
 revoke usage, select on all sequences in schema public from anon, authenticated;
--- Postgres grants EXECUTE on a new function to PUBLIC by default -- without this, anon could
--- call carpark_history_stats via PostgREST's /rpc/ endpoint and read AGGREGATED
--- carpark_history data despite the table itself being locked down above.
-revoke execute on function public.carpark_history_stats from anon, authenticated;
+-- Postgres grants EXECUTE on a new function to PUBLIC by default, and a
+-- role-specific revoke does NOT override a PUBLIC grant -- so the revoke must
+-- name public too, or anon can still call these via PostgREST's /rpc/ endpoint
+-- (reading aggregated carpark_history data, or triggering the heavy baseline
+-- refresh at will). Both functions are service-role-only.
+revoke execute on function public.carpark_history_stats from public, anon, authenticated;
+revoke execute on function public.refresh_carpark_baseline from public, anon, authenticated;
 
 -- ----------------------------------------------------------------------------
 -- 9) Storage bucket for model artifacts (private; Premise #9)

@@ -310,28 +310,45 @@ def _load_momentum(db: SupabaseClient, carpark_ids: list[str]) -> dict[str, Mome
 
 
 def _load_baseline(
-    db: SupabaseClient, carpark_ids: list[str]
-) -> dict[tuple[str, int, int], float]:
-    """Fetch every `carpark_baseline` row for the given carparks.
+    db: SupabaseClient, carpark_ids: list[str], dow: int, slot_of_day: int
+) -> dict[str, float]:
+    """Fetch the `carpark_baseline` cell for one (dow, slot_of_day), per carpark.
 
-    Uses `select_all` (paginated) rather than `select`: this table can hold
-    up to `carparks x 7 dow x 96 slots` rows once the bootstrap window has
-    elapsed, which can exceed PostgREST's default per-request row cap.
+    `carpark_baseline` can hold up to `carparks x 7 dow x 96 slots` rows once
+    the bootstrap window has elapsed, but `run_batch_predict` only ever needs
+    the single target (dow, slot_of_day) cell per carpark -- the forecast
+    horizon's own slot, computed once via `sgt_parts` at the top of that
+    function. Filtering `dow`/`slot_of_day` server-side (rather than fetching
+    every row via the paginated `select_all` and filtering client-side) keeps
+    each 5-minute batch cycle's read to one small, non-paginated request (at
+    most one row per requested carpark) instead of ~150-180 sequential
+    paginated GETs once the table is fully populated.
+
+    Args:
+        db: Supabase client.
+        carpark_ids: Active carpark IDs to load the baseline cell for.
+        dow: Target day-of-week (SGT), matching the `dow` column.
+        slot_of_day: Target slot-of-day (SGT), matching the `slot_of_day`
+            column.
+
+    Returns:
+        A dict mapping carpark_id to avg_available_lots for the requested
+        (dow, slot_of_day). A carpark_id with no matching row is simply
+        absent (callers fall back to live_lots for a missing cell).
     """
     if not carpark_ids:
         return {}
     ids = ",".join(carpark_ids)
-    rows = db.select_all(
+    result = db.select(
         "carpark_baseline",
         params={
-            "select": "carpark_id,dow,slot_of_day,avg_available_lots",
+            "select": "carpark_id,avg_available_lots",
             "carpark_id": f"in.({ids})",
+            "dow": f"eq.{dow}",
+            "slot_of_day": f"eq.{slot_of_day}",
         },
     )
-    return {
-        (row["carpark_id"], row["dow"], row["slot_of_day"]): row["avg_available_lots"]
-        for row in rows
-    }
+    return {row["carpark_id"]: row["avg_available_lots"] for row in result.rows}
 
 
 def _cold_start_row(carpark_id: str, live_lots: int, generated_at: str) -> ForecastRow:
@@ -424,7 +441,7 @@ def run_batch_predict(deps: BatchDeps) -> BatchResult:
         active_version = _load_active_model_version(deps.db)
         history_stats = _load_history_stats(deps.db, carpark_ids, now)
         momentum = _load_momentum(deps.db, carpark_ids)
-        baseline = _load_baseline(deps.db, carpark_ids)
+        baseline = _load_baseline(deps.db, carpark_ids, target_dow, target_slot)
     except SupabaseUnavailableError as exc:
         logger.error("batch_predict: Supabase read failed: %s", exc)
         deps.fail_ping(FAIL_REASON_SUPABASE_UNAVAILABLE)
@@ -476,7 +493,7 @@ def run_batch_predict(deps: BatchDeps) -> BatchResult:
                 )
             )
         else:
-            baseline_value = baseline.get((carpark.carpark_id, target_dow, target_slot))
+            baseline_value = baseline.get(carpark.carpark_id)
             base_value = baseline_value if baseline_value is not None else live_lots
             forecast_lots = max(round(base_value), 0)
             tier = compute_tier(forecast_lots, capacity)

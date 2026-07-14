@@ -17,12 +17,24 @@ export interface Env {
   // Unset until Lane D deploys; the trigger is skipped with a log line.
   BATCH_PREDICT_URL?: string;
   BATCH_SHARED_SECRET?: string;
+  // Unset until the daily baseline-refresh healthchecks.io check exists;
+  // pings are skipped. Deliberately separate from HEALTHCHECKS_POLLER_PING_URL
+  // (see wrangler.toml).
+  HEALTHCHECKS_BASELINE_PING_URL?: string;
 }
 
 export const LTA_ENDPOINT =
   "https://datamall2.mytransport.sg/ltaodataservice/CarParkAvailabilityv2";
 
+// Must byte-match wrangler.toml's [triggers] crons array -- pinned by
+// test/wranglerConfig.test.ts.
+export const POLL_CRON = "*/5 * * * *";
+export const BASELINE_REFRESH_CRON = "17 19 * * *";
+
 const FETCH_TIMEOUT_MS = 10_000;
+// The baseline refresh runs one aggregate RPC over 28 days of history, so it
+// gets a larger budget than the 10s row-write default.
+const BASELINE_REFRESH_TIMEOUT_MS = 30_000;
 const RAW_BODY_LOG_LIMIT = 500;
 
 type LogLevel = "info" | "warn" | "error";
@@ -188,6 +200,16 @@ interface SupabaseRequest {
   context: string;
   /** /fail ping reason if the request fails after the retry. */
   failReason: string;
+  /** Per-request override of FETCH_TIMEOUT_MS. */
+  timeoutMs?: number;
+  /**
+   * When false (default true), a fetch failure whose error is a timeout
+   * (AbortSignal.timeout throws an Error named "TimeoutError") is NOT
+   * retried: a timed-out statement may still be running server-side, and
+   * retrying would run two concurrent heavy aggregations. Non-timeout
+   * network errors and 5xx responses still retry as before.
+   */
+  retryOnTimeout?: boolean;
 }
 
 async function supabaseFetch(env: Env, request: SupabaseRequest): Promise<Response> {
@@ -203,6 +225,8 @@ async function supabaseFetch(env: Env, request: SupabaseRequest): Promise<Respon
     headers["Prefer"] = request.prefer;
   }
   const body = request.body !== undefined ? JSON.stringify(request.body) : undefined;
+  const timeoutMs = request.timeoutMs ?? FETCH_TIMEOUT_MS;
+  const retryOnTimeout = request.retryOnTimeout ?? true;
 
   for (let attempt = 1; ; attempt++) {
     let response: Response | undefined;
@@ -212,9 +236,19 @@ async function supabaseFetch(env: Env, request: SupabaseRequest): Promise<Respon
         method: request.method,
         headers,
         body,
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
+      // AbortSignal.timeout rejects with an Error named "TimeoutError". A
+      // timed-out statement may still be running server-side, so a caller
+      // that opted out of retryOnTimeout must fail fast here rather than
+      // risk two concurrent heavy aggregations.
+      if (!retryOnTimeout && error instanceof Error && error.name === "TimeoutError") {
+        throw new CycleError(
+          request.failReason,
+          `Supabase ${request.context} timed out (no retry): ${String(error)}`,
+        );
+      }
       failure = String(error);
     }
 
@@ -319,29 +353,29 @@ async function updateMomentum(env: Env, now: Date): Promise<void> {
 // healthchecks.io pings + batch-predict trigger
 // --------------------------------------------------------------------------
 
-async function pingSuccess(env: Env): Promise<void> {
-  if (!env.HEALTHCHECKS_POLLER_PING_URL) {
+async function pingSuccess(url: string | undefined): Promise<void> {
+  if (!url) {
     return;
   }
   try {
-    await fetch(env.HEALTHCHECKS_POLLER_PING_URL, {
+    await fetch(url, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     logEvent("info", "healthchecks_success_ping_sent", {});
   } catch (error) {
-    // A missed ping only risks a false "poller silent" alert; never fail an
-    // otherwise-good cycle over it.
+    // A missed ping only risks a false "silent" alert; never fail an
+    // otherwise-good run over it.
     logEvent("warn", "healthchecks_ping_failed", { error: String(error) });
   }
 }
 
-async function pingFail(env: Env, reason: string): Promise<void> {
-  if (!env.HEALTHCHECKS_POLLER_PING_URL) {
+async function pingFail(url: string | undefined, reason: string): Promise<void> {
+  if (!url) {
     logEvent("warn", "healthchecks_fail_ping_skipped", { reason });
     return;
   }
   try {
-    await fetch(`${env.HEALTHCHECKS_POLLER_PING_URL}/fail`, {
+    await fetch(`${url}/fail`, {
       method: "POST",
       body: reason,
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -406,17 +440,55 @@ export async function runCycle(env: Env, now: Date): Promise<void> {
   } catch (error) {
     const reason = error instanceof CycleError ? error.reason : "UNEXPECTED_ERROR";
     logEvent("error", "poll_cycle_failed", { reason, error: String(error) });
-    await pingFail(env, reason);
+    await pingFail(env.HEALTHCHECKS_POLLER_PING_URL, reason);
     return;
   }
 
-  await pingSuccess(env);
+  await pingSuccess(env.HEALTHCHECKS_POLLER_PING_URL);
   await triggerBatchPredict(env);
   logEvent("info", "poll_cycle_complete", { polledAt: polledAtIso });
 }
 
+// Daily Premise #11 refresh: rebuilds carpark_baseline from the trailing 28
+// days of history via the refresh_carpark_baseline() Postgres function. Body
+// is {} because the RPC takes no arguments; the response is the upserted row
+// count (logged, not otherwise used).
+export async function runBaselineRefresh(env: Env): Promise<void> {
+  try {
+    const response = await supabaseFetch(env, {
+      method: "POST",
+      path: "/rest/v1/rpc/refresh_carpark_baseline",
+      body: {},
+      context: "baseline_refresh",
+      failReason: "BASELINE_REFRESH_FAILED",
+      timeoutMs: BASELINE_REFRESH_TIMEOUT_MS,
+      retryOnTimeout: false,
+    });
+    const upserted: unknown = await response.json();
+    logEvent("info", "baseline_refresh_complete", { upserted });
+    await pingSuccess(env.HEALTHCHECKS_BASELINE_PING_URL);
+  } catch (error) {
+    // Mirrors runCycle's catch: EVERY failure (CycleError or not -- e.g. a
+    // non-JSON RPC body) is caught, logged, and /fail-pinged; the handler
+    // never rejects into ctx.waitUntil.
+    const reason = error instanceof CycleError ? error.reason : "UNEXPECTED_ERROR";
+    logEvent("error", "baseline_refresh_failed", { reason, error: String(error) });
+    await pingFail(env.HEALTHCHECKS_BASELINE_PING_URL, reason);
+  }
+}
+
 const worker = {
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (controller.cron === BASELINE_REFRESH_CRON) {
+      ctx.waitUntil(runBaselineRefresh(env));
+      return;
+    }
+    if (controller.cron !== POLL_CRON) {
+      // Unknown cron (e.g. a dashboard-triggered test event) preserves the
+      // old behavior -- run a poll cycle -- but loudly, so a drifted
+      // wrangler.toml cron string cannot silently kill the baseline refresh.
+      logEvent("warn", "unknown_cron", { cron: controller.cron });
+    }
     ctx.waitUntil(runCycle(env, new Date(controller.scheduledTime)));
   },
 } satisfies ExportedHandler<Env>;
