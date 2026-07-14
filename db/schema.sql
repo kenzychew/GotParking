@@ -173,7 +173,7 @@ comment on table public.carpark_baseline is
 
 -- refresh_carpark_baseline: the daily aggregation job behind Premise #11 -- rebuilds
 -- the baseline table from the trailing 28 days of carpark_history. Called once per
--- day (03:15 SGT) by the poller worker via PostgREST /rpc/, and manually for
+-- day (03:17 SGT) by the poller worker via PostgREST /rpc/, and manually for
 -- backfills. Mirrors carpark_history_stats's conventions (language sql, security
 -- invoker, revoke-execute in section 8) but is VOLATILE (the default -- not stable)
 -- because it writes.
