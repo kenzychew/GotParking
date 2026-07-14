@@ -20,7 +20,7 @@ crons = ["*/5 * * * *", "15 19 * * *"]
 enabled = true
 
 # ---------------------------------------------------------------------------
-# Runtime bindings -- all six are Workers SECRETS (never [vars], never
+# Runtime bindings -- all seven are Workers SECRETS (never [vars], never
 # committed). Set each with: wrangler secret put <NAME>
 #
 #   LTA_API_KEY                  LTA DataMall AccountKey
