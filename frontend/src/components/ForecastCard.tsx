@@ -93,10 +93,13 @@ export function ForecastCard({ carparkId, forecastQuery, theme }: ForecastCardPr
         </>
       ) : carpark.tier !== null && carpark.forecast_lots !== null ? (
         <>
-          <p className="forecast-card__headline">~{carpark.forecast_lots} lots free in 20 min</p>
-          <TierBadge tier={carpark.tier} theme={theme} />
+          <div className="forecast-card__section">
+            <p className="forecast-card__section-label">Predicted in 20 min</p>
+            <p className="forecast-card__headline">~{carpark.forecast_lots} lots free</p>
+            <TierBadge tier={carpark.tier} theme={theme} />
+            <TransparencyNote modelVersion={carpark.model_version} />
+          </div>
           <LiveCountLine liveLots={carpark.live_lots} />
-          <TransparencyNote modelVersion={carpark.model_version} />
         </>
       ) : (
         // Defensive fallback: db/schema.sql's carpark_forecast_shape check
@@ -110,7 +113,12 @@ export function ForecastCard({ carparkId, forecastQuery, theme }: ForecastCardPr
 }
 
 function LiveCountLine({ liveLots }: { liveLots: number }) {
-  return <p className="forecast-card__live">{liveLots} lots available now</p>;
+  return (
+    <div className="forecast-card__section">
+      <p className="forecast-card__section-label">Right now</p>
+      <p className="forecast-card__live">{liveLots} lots available</p>
+    </div>
+  );
 }
 
 function TransparencyNote({ modelVersion }: { modelVersion: string | null }) {

@@ -55,9 +55,9 @@ describe("required test slice", () => {
 
     expect(await screen.findByRole("heading", { name: "Suntec City" })).toBeInTheDocument();
     // carpark_id "1" in the fixture: state "ml", forecast_lots=120, tier="limited", live_lots=100
-    expect(await screen.findByText("~120 lots free in 20 min")).toBeInTheDocument();
+    expect(await screen.findByText("~120 lots free")).toBeInTheDocument();
     expect(screen.getByText("Limited")).toBeInTheDocument();
-    expect(screen.getByText("100 lots available now")).toBeInTheDocument();
+    expect(screen.getByText("100 lots available")).toBeInTheDocument();
     expect(
       screen.getByText("Learned from historical patterns (model lgbm-2026-07-01)"),
     ).toBeInTheDocument();
@@ -122,7 +122,7 @@ describe("required test slice", () => {
 
     await user.click(screen.getByRole("button", { name: "Retry" }));
 
-    expect(await screen.findByText("~120 lots free in 20 min")).toBeInTheDocument();
+    expect(await screen.findByText("~120 lots free")).toBeInTheDocument();
   });
 
   it('outside-seed-list search shows "not covered yet" + every supported mall', async () => {
@@ -164,7 +164,7 @@ describe("required test slice", () => {
     fireEvent.click(suggestion);
     fireEvent.click(suggestion);
 
-    await screen.findByText("~120 lots free in 20 min");
+    await screen.findByText("~120 lots free");
 
     const stored: unknown = JSON.parse(
       window.localStorage.getItem("gotparking:shortcuts-v1") ?? "[]",
@@ -180,8 +180,8 @@ describe("required test slice", () => {
     await selectViaSearch(user, "Suntec", "Suntec City");
 
     expect(await screen.findByText(/Data delayed - updated \d+m ago/)).toBeInTheDocument();
-    expect(screen.getByText("100 lots available now")).toBeInTheDocument();
-    expect(screen.queryByText("~120 lots free in 20 min")).not.toBeInTheDocument();
+    expect(screen.getByText("100 lots available")).toBeInTheDocument();
+    expect(screen.queryByText("~120 lots free")).not.toBeInTheDocument();
   });
 
   it("cold_start card shows collecting-data copy + live count, never a forecast number", async () => {
@@ -192,8 +192,8 @@ describe("required test slice", () => {
     await selectViaSearch(user, "Raffles", "Raffles City Tower");
 
     expect(await screen.findByText("Collecting data - check back in a few days")).toBeInTheDocument();
-    expect(screen.getByText("50 lots available now")).toBeInTheDocument();
-    expect(screen.queryByText(/lots free in 20 min/)).not.toBeInTheDocument();
+    expect(screen.getByText("50 lots available")).toBeInTheDocument();
+    expect(screen.queryByText(/lots free/)).not.toBeInTheDocument();
   });
 
   it("503 shows distinct server-degraded copy from the offline copy", async () => {
