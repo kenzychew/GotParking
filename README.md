@@ -1,144 +1,77 @@
 # GotParking
 
-Forecasts Singapore carpark availability ("~12 lots free in 20 min") instead of just showing
-today's live lot-count, which is all that currently exists publicly. Classical predictive ML
-(LightGBM) trained on LTA DataMall data, built to showcase ML engineering to GovTech/OGP.
+**Live at [gotparking.vercel.app](https://gotparking.vercel.app)**
 
-Full design doc, dedupe research, architecture, and review findings:
-`~/.gstack/projects/gstack-playground/kenzy-unknown-design-20260702-210951.md`
+GotParking forecasts Singapore carpark availability ("~12 lots free in 20 min") instead of just showing the current lot count, which is all that exists publicly today.
+It is a free public product for drivers, built entirely on open government data, currently covering 268 carparks across the island.
 
-## Layout
+The forecasting model is classical predictive ML: a LightGBM regressor pretrained on the SINPA research dataset, then fine-tuned weekly on live 2026 availability polls.
+Every candidate model must beat both a historical-average baseline and a persistence baseline through a two-phase promotion gate before it serves a single forecast.
+The first promoted model went live on 2026-07-11 and every covered carpark now serves real ML forecasts; during the initial cold-start window the app served live counts with forecasts marked as warming up, never a fabricated number.
 
-- `db/` — Supabase schema and RLS policies (ap-southeast-1)
-- `poller/` — Cloudflare Worker, polls LTA DataMall every 5 min, triggers batch predictions
-- `training/` — weekly GitHub Actions job, trains and promotes LightGBM (SINPA-pretrained
-  first candidate, two-phase gate, benchmarked against historical-average AND persistence)
-- `api/` — Vercel Python (sin1): poller-triggered batch forecasts + the public cached read
-  endpoint (the only public API surface)
-- `frontend/` — mobile-first PWA
-- `scripts/` — carpark coverage-expansion tooling (LTA-feed whitelist matching, human sign-off
-  gate, T1-style variance validation, seed-list regeneration) plus the T0 capacity load test;
-  see [Coverage Expansion](#coverage-expansion) below
+## Data sources
 
-## Status
+- [LTA DataMall](https://datamall.lta.gov.sg/) - live carpark availability, polled every 5 minutes.
+- [data.gov.sg](https://data.gov.sg/) - carpark and mall metadata used for onboarding and matching.
+- [SINPA](https://github.com/yoshall/SINPA) research dataset (Singapore Open Data Licence) - historical availability used to pretrain the first model so it is useful before months of live history accumulate.
 
-Design locked: approved through /office-hours, /plan-eng-review, /autoplan (CEO + Design +
-Eng), and a 2026-07-04 max-effort eng re-review (11 findings, all resolved and folded in —
-see the design doc's GSTACK REVIEW REPORT). T1 signal validation done (all 10 seed carparks
-confirmed). T0 SINPA spike done: GO — the first LightGBM pretrains on the SINPA historical
-dataset and fine-tunes on live 2026 data (`docs/t0-sinpa-spike.md`). T2 schema applied and
-verified live.
+## How it works
 
-**Provisioning (T1.5) is fully complete** — every phase, every platform, every secret. The
-poller is **live** at `https://gotparking-poller.kenzychew.workers.dev` (cron confirmed every
-5 minutes, all 6 secrets wired) and the site is **live** at
-`https://gotparking.vercel.app` (renamed from `gstack-playground.vercel.app` on 2026-07-11;
-the legacy domain still serves — independently re-verified: `200` on `/`, and
-`/api/forecast` now also returns `200` — the poller/batch-predict pipeline has run long enough
-that `carpark_forecast` holds real rows for all 24 carparks (see
-[Coverage Expansion](#coverage-expansion) below), each still in the designed `cold_start` state
-(`forecast_lots: null`, real `live_lots` served)
-pending the cold-start threshold and the first weekly training run; `X-Vercel-Id: sin1::`
-continues to confirm the region pin). Both healthchecks.io dead-man's-switch checks exist —
-`gotparking-poller` is already `up` (receiving real pings); `gotparking-training` stays
-intentionally paused until `.github/workflows/train.yml` fires on its own weekly schedule and
-sends its first real ping. GitHub Actions and Vercel each have their full set of secrets/env
-vars wired. See `docs/provisioning-checklist.md` for the full trail, including two
-dashboard-vs-reality corrections found along the way (Cloudflare's workers.dev toggle location;
-Vercel's actual deploy blocker, below).
+```
+LTA DataMall
+     |  poll every 5 min
+     v
+poller (Cloudflare Worker) ----> Supabase Postgres (ap-southeast-1)
+     |                                ^          |
+     |  trigger                       | write    | read (cached)
+     v                                |          v
+/api/batch_predict (Vercel, sin1) ----+     /api/forecast ----> frontend (PWA)
 
-## Coverage Expansion
+training (GitHub Actions, weekly) --> trains LightGBM on accumulated polls
+                                      --> two-phase gate vs baselines --> promotes or holds
+```
 
-**2026-07-08: 10 → 24 carparks, first wave of a two-part plan.** A whitelist-matching pipeline
-(`scripts/recon_mall_whitelist.py` → `scripts/build_mall_whitelist.py`) fuzzy-matches the live
-LTA feed against data.gov.sg's mall dataset, gates every candidate behind a mandatory human
-sign-off (fuzzy-match and T1 variance validation are NOT orthogonal checks — a live run caught a
-real false positive, "Junction 8" matching "Junction 10" at 85.7% — see TODOS.md), then a
-6-hour variance-observation window per `analyze_variance.py`'s existing `MIN_MEANINGFUL_RANGE`
-threshold. Of 18 mall candidates found (500 LTA carparks × 357 mall-rates dataset rows), 14
-verified and are now live; 3 rejected for insufficient lot-count variance (Bt Panjang Plaza,
-Singapore Flyer, Concorde Hotel); 1 excluded (the Junction 8/10 false positive).
-`scripts/regen_seed_lists.py` (Approach C — a CI-generatable static-list regen, not a
-DB-driven poller; chosen after a Phase 0 recon found only 18 real candidates, too few to justify
-a new runtime dependency) regenerated `poller/src/carparks.ts` and
-`frontend/src/seed/seedCarparks.ts`; the poller and frontend have been redeployed. A new
-`carparks.is_original_seed` / `model_config.first_promotion_at` pair (`db/schema.sql`) gates
-newly-onboarded carparks out of pooled training until the original 10's first-ever promotion
-happens, so the expansion can't dilute that outcome. `db/schema.sql`'s seed INSERTs now cover
-all 24 (a second block added the same day for the 14 new rows, matching what was applied to
-production) — a fresh apply reproduces the live state exactly. Full plan + 3-iteration
-adversarial review:
-`~/.gstack/projects/gstack-playground/ceo-plans/2026-07-07-carpark-coverage-expansion.md`.
+- A Cloudflare Worker polls LTA DataMall every 5 minutes, stores availability in Supabase, and triggers batch prediction.
+- Batch prediction runs LightGBM inference for all carparks in one Vercel Python function pinned to Singapore (`sin1`) and writes forecasts back.
+- `/api/forecast` and `/api/geocode_postal` are the two public endpoints: a cached read of the latest forecasts, and a server-side postal-code lookup that keeps OneMap credentials off the client. `/api/batch_predict` is secret-gated and only callable by the poller.
+- A weekly GitHub Actions job retrains on the growing live history and only promotes models that clear the baseline gate.
+- The poller, batch prediction, and the training job all report to healthchecks.io dead-man's-switch checks, so silent failure pages a human.
 
-A second, larger wave (full ~500-carpark LTA feed, no fuzzy-matching needed) is planned but
-explicitly **capped to a first sub-wave of 50-100 and held pending real accuracy numbers** from
-this batch — an independent CEO review found that scaling carpark *count* before the model has
-produced one validated forecast optimizes a variable this project's actual audience (GovTech/OGP)
-doesn't judge (see TODOS.md's "Remaining ~400 LTA feed carparks" entry). Its T0 load-test gate
-already ran (`docs/t0-load-test-2026-07-08.md`): LightGBM inference cost is negligible
-(~0.055ms/carpark against a representative synthetic model); the dominant cost is one Supabase
-read (~480ms, flat regardless of carpark count thanks to a recent N+1 fix in
-`api/_lib/batch_logic.py`) — even 500 carparks on the `ml` path simultaneously extrapolates to
-~5% of Vercel Hobby's default timeout.
+## Repository layout
 
-**All four implementation lanes are done and merged**, plus a fifth (`scripts/`) added by the
-coverage-expansion work. T3 (poller): `poller/`, 39/39 tests green. T4 (api): `api/`, 116/116
-tests green, ruff + mypy clean. T6 (frontend): `frontend/`, 70/70 tests green, production build
-clean (installable PWA, offline cache, Public Sans self-hosted). T5 (training): `training/`,
-172/172 tests green, ruff + mypy clean — SGT/holiday logic is cross-checked against `api/`'s
-copy by a dedicated test (`training/tests/test_sg_time.py` loads `api/_lib/sg_time.py` directly
-and diffs both across a dense grid of instants), run manually via `uv run pytest` —
-`.github/workflows/train.yml` only runs the production training job itself, it does not run any
-lane's test suite. `scripts/`: 35/35 tests green (the whitelist-matching + seed-list-regen
-tooling), ruff + mypy clean. Test Requirements coverage: **49/49 planned paths (100%)** — see
-the design doc (the coverage-expansion work is tracked separately, outside that original
-requirements set — see its own plan/review artifacts linked above).
+- `db/` - Supabase schema and RLS policies.
+- `poller/` - Cloudflare Worker: 5-minute LTA DataMall polling, batch-prediction trigger.
+- `training/` - weekly GitHub Actions training job: SINPA-pretrained LightGBM, two-phase promotion gate, benchmarked against historical-average and persistence baselines.
+- `api/` - Vercel Python functions: poller-triggered batch forecasts, the public cached read endpoint, and the postal-code geocoding proxy.
+- `frontend/` - mobile-first installable PWA with offline cache.
+- `scripts/` - carpark coverage-expansion tooling: LTA-feed whitelist matching with a mandatory human sign-off gate, variance validation, and seed-list regeneration.
+- `docs/` - decision records: the SINPA pretraining spike, the capacity load test, and the full provisioning trail.
 
-Every lane was independently re-verified (tests re-run from a fresh `main` checkout, not
-just the build worktree) before merging. Two real gaps were found this way and handled
-openly rather than swept aside: batch predict's failure alerting had no ping URL wired in
-production at all (found 2026-07-06; fixed same day — `HEALTHCHECKS_TRAINING_PING_URL` wired
-to Vercel and live-verified end-to-end via a real forced-failure drill, see TODOS.md); and a
-training bug where early-exit cycles skipped without recording a `training_runs` audit row
-was found and fixed directly, with regression tests covering 3 of the 4 early-exit paths,
-before merge.
+## Development
 
-**Vercel deploy: fixed 2026-07-05.** The "No python entrypoint found in default locations"
-error was NOT caused by the repo's file layout — the linked Vercel project had Framework
-Preset `python` (auto-detected at import time from the root `requirements.txt`), and under
-that preset Vercel treats the whole repo as ONE Python app needing a single entrypoint; the
-per-file `api/` convention is never consulted, which is why `.vercelignore` and `functions`
-tweaks changed nothing. `"framework": null` in `vercel.json` cleared that error but then hit
-a hard 225 MB Python bundle cap (both functions bundle all of `lightgbm`+`scipy`+`numpy` from
-one shared `requirements.txt`, ~228 MB even after Vercel's own optimization). The working fix
-is Vercel's `services` model: three services (`frontend`; `batch_predict` and `forecast` each
-rooted at `api/`, installing from `api/requirements.txt`, each with its own per-service
-bundle) plus top-level rewrites preserving the original `/api/batch_predict` and
-`/api/forecast` paths. Two implementation gotchas, both confirmed against the
-`@vercel/python` builder source: service entrypoints must be file-form (`"forecast.py"`) —
-the `module:variable` form triggers a validator that rejects `handler` *classes* (it only
-accepts functions, though detection itself understands classes) — and `lightgbm` needs a
-one-line service `buildCommand` copying `libgomp.so.1` into `lib/`, because the wheel doesn't
-bundle it and the function runtime image lacks it (`/var/task/lib` is on the runtime's
-library path). `regions: ["sin1"]` stays top-level and held: live responses show
-`X-Vercel-Id: sin1::`.
+Each lane has its own test suite (528 tests total across the five lanes as of 2026-07-17, all green, ruff and mypy clean on the Python lanes):
 
-**Nothing is deferred anymore.** The app has moved past its initial "predictions temporarily
-unavailable" 503 — `/api/forecast` returns `200` for all 24 carparks in the designed
-`cold_start` state (real `live_lots`, `forecast_lots: null`) rather than an empty table. The
-only thing left before it shows real ML forecasts is data: the original 10 have been polling
-since 2026-07-05/06 (the 14 coverage-expansion carparks since 2026-07-08), so T5's training job
-(weekly, next fires on its own schedule) hasn't had ~2-3 weeks of history to train against yet
-— exactly the bootstrap window the design doc's Approach A always expected. The
-training-eligibility gate (see [Coverage Expansion](#coverage-expansion) above) means the 14 new carparks won't pool
-into training at all until that first promotion happens, regardless of how much history they
-accumulate. The post-deploy verification checklist in the design doc's Observability section is
-the next thing worth running once that data exists.
+```bash
+(cd poller && npx vitest run)
+(cd api && uv run pytest -q)
+(cd training && uv run pytest -q)
+(cd frontend && npx vitest run)
+(cd scripts && uv run pytest -q)
+```
 
-**QA: 2026-07-06, health score 98/100, zero bugs.** A full `/qa` browser pass against the
-live production site — search, carpark selection, no-results state, dark mode, Share, the
-shortcuts quick-access chip, mobile viewport — everything worked correctly, console clean
-throughout. Full report: `.gstack/qa-reports/qa-report-gstack-playground-vercel-app-2026-07-06.md`.
+Python lanes use `uv` (Python 3.11+); JS/TS lanes use npm.
+Deploys: Vercel auto-deploys `main` (frontend + api); the poller deploys via `wrangler deploy` from `poller/`; training runs on its own GitHub Actions schedule.
 
-See also: `CHANGELOG.md` for release history, `TODOS.md` for tracked follow-ups (all
-low/medium priority, none blocking).
+## Development process
+
+This project is built with an agentic engineering workflow ([gstack](https://github.com/garrytan/gstack)) with a human making every decision that matters.
+The tooling does not lower the bar, it raises it: every feature passed staged product, engineering, and design plan reviews before implementation, the coverage expansion went through a 3-iteration adversarial review, and all 49 test paths planned in the internal design doc are covered.
+Shipped work is verified against production, not just CI: failure alerting was proven with a real forced-failure drill, and every lane's tests were re-run from a fresh checkout before merge.
+
+## Project docs
+
+- `CHANGELOG.md` - release history.
+- `TODOS.md` - tracked follow-ups.
+- `docs/provisioning-checklist.md` - the full infrastructure provisioning trail.
+- `docs/t0-sinpa-spike.md` - why SINPA pretraining got a GO.
+- `docs/t0-load-test-2026-07-08.md` - capacity headroom for scaling to the full LTA feed.

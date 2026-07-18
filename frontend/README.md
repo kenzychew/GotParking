@@ -75,7 +75,7 @@ worth doing once both lanes are merged (see Known gaps below).
 ## Vercel build settings
 
 **Superseded 2026-07-06** by the `services` model migration (see root `CLAUDE.md`'s Deploy
-Configuration section and `README.md` for the full story) -- this section originally
+Configuration section and `docs/provisioning-checklist.md` for the full story) -- this section originally
 described a flat `{"regions": ["sin1"]}` root `vercel.json` this lane would merge a
 `buildCommand`/`outputDirectory` into. The current root `vercel.json` instead declares a
 `frontend` service (`services.frontend = {"root": "frontend/"}`), with the build command and

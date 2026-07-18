@@ -223,7 +223,13 @@ every wave after) doesn't require remembering to touch `schema.sql` by hand agai
 **Depends on:** The carpark-expansion plan's first wave proving the direct-onboard + regen
 pattern works end-to-end.
 
-### Remaining ~400 LTA feed carparks (held pending accuracy validation)
+### Remaining ~400 LTA feed carparks (DONE - wave shipped 2026-07-09)
+
+**Status 2026-07-18:** DONE. Commit `738c996` (2026-07-09) onboarded 244 verified full-feed
+wave carparks, taking live coverage to 268. The first model promotion followed
+(~2026-07-11, `lgbm_20260711_215006`), and all 268 carparks now serve `state: "ml"`
+forecasts in production (verified against the live `/api/forecast` on 2026-07-18). The
+paragraphs below record the plan as it stood while this wave was still held.
 
 **Status 2026-07-08:** T0 (the load test gating this wave's capacity decision) is DONE — see
 `docs/t0-load-test-2026-07-08.md`. Result: comfortable headroom (LightGBM inference cost is
@@ -410,7 +416,7 @@ out-of-scope-for-now) risk this doesn't fully close.
 **Effort:** M-L (per batch of carparks) — **mall wave (18 candidates) DONE, ~5 hours end to
 end** including 2 full review cycles, implementation, and two 6-hour observation windows.
 **Priority:** P3 — mall wave complete; remaining scope now lives entirely in "Remaining ~400 LTA
-feed carparks" below (separately tracked, held pending accuracy validation).
+feed carparks" below (separately tracked; that wave shipped 2026-07-09).
 **Depends on:** MVP launched and stable (was already true). Mall wave's own dependency (T1.5
 provisioning) is satisfied; DONE.
 

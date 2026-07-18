@@ -13,6 +13,15 @@ cd ~/.claude/skills/gstack && ./setup
 
 Note for Windows: skills install as file copies (no symlinks), so re-run `./setup` after every `git pull` in the gstack repo, or use `/gstack-upgrade`.
 
+## Local status doc
+
+If `STATUS.md` exists at the repo root (local-only, gitignored), read it for the current
+implementation status narrative before starting substantive work, and update it when shipping
+meaningful changes. Committed sources of truth remain `TODOS.md`, `CHANGELOG.md`,
+`docs/provisioning-checklist.md`, and git history; `README.md` is public-facing and
+carries no status detail beyond the dated test-count line and carpark count, which must be
+refreshed when they change.
+
 ## Skill routing
 
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.

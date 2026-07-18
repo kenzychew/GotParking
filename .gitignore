@@ -15,6 +15,9 @@ dist/
 .env.local
 .dev.vars
 
+# Local-only implementation status narrative (see CLAUDE.md pointer)
+/STATUS.md
+
 # OS
 .DS_Store
 Thumbs.db
