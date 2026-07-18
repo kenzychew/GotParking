@@ -12,6 +12,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0,<9",
+    "ruff>=0.6",
+    "mypy>=1.11",
 ]
 
 [tool.pytest.ini_options]
@@ -21,3 +23,11 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.mypy]
+# 3.12, not the 3.11 floor from requires-python: mypy would otherwise parse installed
+# dependencies' bundled type stubs (e.g. numpy's) assuming an older Python than what
+# executes, rejecting 3.12-only syntax those stubs use (same rationale as training/).
+python_version = "3.12"
+ignore_missing_imports = true
+exclude = ["\\.venv"]
