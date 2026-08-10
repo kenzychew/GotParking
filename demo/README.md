@@ -41,33 +41,49 @@ any real network call or credential.
 
 ## Credentials -- read this before deploying anywhere real
 
-**Needs a decision before this gets a real Supabase key wired into Railway.**
 `db/README.md` and `db/schema.sql` are explicit: RLS is deny-by-default on
 `carpark_forecast`/`carparks`, with grants revoked for `anon`/`authenticated`
 on top -- "Only the service-role key ... can touch data." That means the
-*only* credential that can currently perform this demo's read is the
+*only* credential able to perform this demo's read out of the box is the
 **service-role key**, which bypasses RLS entirely and can write to every
 table (`carpark_history`, `model_config`, `training_runs`, ...), not a
 read-only-safe key. Handing that key to a second deployment would give it
 de facto write access to production data, which contradicts this service's
-whole point (read-only, no write path).
+whole point (read-only, no write path). This was flagged rather than
+guessed at, per the task brief.
 
-This was flagged rather than guessed at, per the task brief. Two ways to
-close the gap before a real Railway deploy uses a real key:
+**Chosen approach (captain's decision): a dedicated read-only Postgres
+role**, separate from both `anon` and `service_role`. The migration is
+`db/schema.sql` section 11 (`demo_reader`): `SELECT`-only grants plus RLS
+policies scoped to exactly `carpark_forecast` and `carparks`, granted to
+`authenticator` so PostgREST can switch into it via a JWT's `role` claim --
+same mechanism Supabase uses for `anon`/`authenticated` themselves. That
+section only creates the role and its grants; it does **not** mint the key.
+Applying it is a manual step for whoever runs it against the live project
+(paste into the Supabase SQL Editor, same as the rest of `schema.sql`) --
+this PR does not execute it.
 
-1. Add a narrow RLS policy granting `SELECT` on just `carpark_forecast` and
-   `carparks` to the `anon` role (this is already public data served
-   unauthenticated via `/api/forecast`), and mint an anon/publishable key
-   scoped by that policy for this demo to use.
-2. Provision a dedicated Postgres role with `SELECT`-only grants on those
-   two tables and a key for it, separate from both `anon` and
-   `service_role`.
+After applying section 11, two things need to happen before this demo can
+actually use `demo_reader` for real:
 
-Until one of those exists, run this demo locally only, against your own
+1. Generate a JWT signed with the project's JWT secret (Project Settings ->
+   API) whose payload includes `"role": "demo_reader"` -- there's no
+   dashboard button for this, it's hand-crafted the same way the
+   anon/service_role keys themselves are. `db/schema.sql`'s section 11
+   comment has the details.
+2. Set that JWT as **`SUPABASE_DEMO_READER_KEY`** wherever this demo runs
+   (Railway env vars for a real deploy, or a local `.env` for testing
+   against your own project). This is the env var name `demo/app.py` should
+   read the key from -- wiring `app.py` to actually read it (instead of
+   `_lib.config.load_settings()`'s `SUPABASE_SERVICE_ROLE_KEY`, which this
+   demo should stop using once `demo_reader` exists) is a small follow-up
+   left for once the role and key are real and testable, not part of this
+   migration.
+
+Until both of those exist, run this demo locally only, against your own
 Supabase project's service-role key (never production's), or with
 `SUPABASE_URL` pointed at a local PostgREST-compatible stub. Railway wiring
-itself (and picking one of the above) is an explicit follow-up, not part of
-this task.
+itself is a separate, later follow-up.
 
 ## Layout
 

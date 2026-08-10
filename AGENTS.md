@@ -113,14 +113,20 @@ Vercel — reuses `api/_lib/read_logic.py`/`config.py`/`supabase_rest.py`
 verbatim; never touches `api/batch_predict.py` or any write path. Proven
 locally only; Railway wiring is an explicit, not-yet-done follow-up.
 
-**Blocking gap before a real deploy:** the only Supabase credential able to
-read `carpark_forecast`/`carparks` today is the service-role key — RLS is
-deny-by-default with `anon`/`authenticated` grants revoked (`db/README.md`,
-`db/schema.sql`). That key bypasses RLS and can write anywhere, so it is
-not safe to hand to a second deployment. `demo/README.md`'s Credentials
-section has the two remediation options (a narrow anon `SELECT` RLS policy,
-or a dedicated read-only Postgres role) — resolve one of those before
-wiring a real `SUPABASE_SERVICE_ROLE_KEY`-equivalent into Railway.
+**Credential decision made, not yet applied:** the only Supabase credential
+able to read `carpark_forecast`/`carparks` out of the box is the
+service-role key — RLS is deny-by-default with `anon`/`authenticated`
+grants revoked (`db/README.md`, `db/schema.sql`). That key bypasses RLS and
+can write anywhere, so it is not safe to hand to a second deployment.
+Captain's decision: a dedicated `demo_reader` Postgres role, SELECT-only on
+those two tables (`db/schema.sql` section 11) — that migration is written
+but not yet applied to the live project (manual step), and no JWT for that
+role has been minted yet. `demo/app.py` still authenticates via
+`_lib.config.load_settings()`'s `SUPABASE_SERVICE_ROLE_KEY`; switching it to
+read `SUPABASE_DEMO_READER_KEY` instead is a small follow-up once the role
+and key are real. See `demo/README.md`'s Credentials section for the
+step-by-step (JWT minting instructions live as a comment in `db/schema.sql`
+section 11 itself).
 
 ## Maintaining this file
 
