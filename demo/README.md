@@ -18,7 +18,7 @@ routes to `api/batch_predict.py` or any write path.
 ```bash
 cd demo
 uv venv .venv && uv pip install -p .venv -r requirements-demo.txt -r requirements-dev.txt
-cp .env.example .env   # fill in SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY -- see Credentials below
+cp .env.example .env   # fill in SUPABASE_URL / SUPABASE_DEMO_READER_KEY -- see Credentials below
 set -a && source .env && set +a
 .venv/bin/uvicorn app:app --reload
 ```
@@ -35,7 +35,7 @@ cd demo
 ```
 
 Follows the same pattern as `api/tests/test_forecast_handler.py`: monkeypatches
-`load_settings`/`SupabaseREST` with the shared `api/tests/fakes.FakeSupabaseDB`
+the Supabase env vars/`SupabaseREST` with the shared `api/tests/fakes.FakeSupabaseDB`
 test double, so the suite proves the FastAPI route wiring end-to-end without
 any real network call or credential.
 
@@ -63,6 +63,14 @@ Applying it is a manual step for whoever runs it against the live project
 (paste into the Supabase SQL Editor, same as the rest of `schema.sql`) --
 this PR does not execute it.
 
+`demo/app.py` reads its Supabase credentials directly from
+`SUPABASE_URL`/**`SUPABASE_DEMO_READER_KEY`** (not through
+`_lib.config.load_settings()`, which is shared with the write-capable
+Vercel API and requires the service-role key). If either var is
+missing/blank, `GET /api/forecast` falls straight through to the typed 503
+rather than crashing -- so the app runs fine before the role/key exist,
+just without live data.
+
 After applying section 11, two things need to happen before this demo can
 actually use `demo_reader` for real:
 
@@ -71,19 +79,14 @@ actually use `demo_reader` for real:
    dashboard button for this, it's hand-crafted the same way the
    anon/service_role keys themselves are. `db/schema.sql`'s section 11
    comment has the details.
-2. Set that JWT as **`SUPABASE_DEMO_READER_KEY`** wherever this demo runs
+2. Set that JWT as `SUPABASE_DEMO_READER_KEY` wherever this demo runs
    (Railway env vars for a real deploy, or a local `.env` for testing
-   against your own project). This is the env var name `demo/app.py` should
-   read the key from -- wiring `app.py` to actually read it (instead of
-   `_lib.config.load_settings()`'s `SUPABASE_SERVICE_ROLE_KEY`, which this
-   demo should stop using once `demo_reader` exists) is a small follow-up
-   left for once the role and key are real and testable, not part of this
-   migration.
+   against your own project).
 
 Until both of those exist, run this demo locally only, against your own
-Supabase project's service-role key (never production's), or with
-`SUPABASE_URL` pointed at a local PostgREST-compatible stub. Railway wiring
-itself is a separate, later follow-up.
+Supabase project (pointing `SUPABASE_DEMO_READER_KEY` at any key with read
+access there, never production's service-role key), or with `SUPABASE_URL`
+pointed at a local PostgREST-compatible stub.
 
 ## Layout
 

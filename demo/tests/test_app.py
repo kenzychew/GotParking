@@ -1,10 +1,11 @@
 """Tests for demo/app.py's FastAPI route.
 
-Mirrors api/tests/test_forecast_handler.py's approach: monkeypatch
-`load_settings`/`SupabaseREST` at the point of use so no real network call
-or credential is ever needed here, while still proving the FastAPI route
-reuses the exact same `_lib.read_logic.handle_forecast_read` business logic
-as `api/forecast.py` -- same pinned payload shape, same typed-503 contract.
+Mirrors api/tests/test_forecast_handler.py's approach: monkeypatch the
+`SUPABASE_URL`/`SUPABASE_DEMO_READER_KEY` env vars and `SupabaseREST` at the
+point of use so no real network call or credential is ever needed here,
+while still proving the FastAPI route reuses the exact same
+`_lib.read_logic.handle_forecast_read` business logic as `api/forecast.py`
+-- same pinned payload shape, same typed-503 contract.
 """
 
 from __future__ import annotations
@@ -50,10 +51,8 @@ def test_forecast_happy_path_returns_pinned_payload(
             "carparks": [{"carpark_id": "1", "name": "Suntec City"}],
         }
     )
-    fake_settings = type(
-        "S", (), {"supabase_url": "https://x", "supabase_service_role_key": "k"}
-    )()
-    monkeypatch.setattr(demo_app, "load_settings", lambda: fake_settings)
+    monkeypatch.setenv("SUPABASE_URL", "https://x")
+    monkeypatch.setenv("SUPABASE_DEMO_READER_KEY", "k")
     monkeypatch.setattr(demo_app, "SupabaseREST", lambda *a, **k: db)
 
     response = client.get("/api/forecast")
@@ -78,10 +77,8 @@ def test_forecast_happy_path_returns_pinned_payload(
 def test_forecast_missing_env_yields_typed_503_not_a_crash(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def raise_misconfigured() -> None:
-        raise RuntimeError("missing required environment variable(s): SUPABASE_URL")
-
-    monkeypatch.setattr(demo_app, "load_settings", raise_misconfigured)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_DEMO_READER_KEY", raising=False)
 
     response = client.get("/api/forecast")
 
