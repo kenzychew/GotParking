@@ -17,6 +17,7 @@ currently rests on operator discipline rather than the credential itself.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -32,7 +33,6 @@ _API_DIR = Path(__file__).resolve().parent.parent / "api"
 if str(_API_DIR) not in sys.path:
     sys.path.insert(0, str(_API_DIR))
 
-from _lib.config import load_settings
 from _lib.read_logic import ReadDeps, handle_forecast_read, unavailable_response
 from _lib.supabase_rest import SupabaseREST
 
@@ -40,6 +40,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="GotParking demo (read-only forecast viewer)")
+
+
+def _load_demo_reader_settings() -> tuple[str, str] | None:
+    """Read this demo's own Supabase settings, deliberately not via
+    `_lib.config.load_settings()` -- that loader is shared with the
+    write-capable Vercel API and requires `SUPABASE_SERVICE_ROLE_KEY`, which
+    this read-only demo must never use (see demo/README.md's "Credentials"
+    section). Returns None (never raises) if `SUPABASE_URL` or
+    `SUPABASE_DEMO_READER_KEY` is missing/blank, so the caller falls through
+    to the same typed 503 as any other unavailable-credentials case.
+    """
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    demo_reader_key = os.environ.get("SUPABASE_DEMO_READER_KEY", "").strip()
+    if not supabase_url or not demo_reader_key:
+        return None
+    return supabase_url.rstrip("/"), demo_reader_key
 
 
 @app.get("/api/forecast")
@@ -52,9 +68,13 @@ def get_forecast() -> JSONResponse:
     """
     db: SupabaseREST | None = None
     try:
-        settings = load_settings()
-        db = SupabaseREST(settings.supabase_url, settings.supabase_service_role_key)
-        response = handle_forecast_read(ReadDeps(db=db))
+        demo_settings = _load_demo_reader_settings()
+        if demo_settings is None:
+            response = unavailable_response()
+        else:
+            supabase_url, demo_reader_key = demo_settings
+            db = SupabaseREST(supabase_url, demo_reader_key)
+            response = handle_forecast_read(ReadDeps(db=db))
     except Exception:
         logger.exception("demo forecast: unhandled error")
         response = unavailable_response()

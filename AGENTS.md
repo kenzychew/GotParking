@@ -109,24 +109,28 @@ here so they aren't silently dropped, but are NOT automated by /land-and-deploy.
 
 `demo/` is a second, portfolio-consistent front end for the same public
 `/api/forecast` data, built with FastAPI (see `demo/README.md`) instead of
-Vercel — reuses `api/_lib/read_logic.py`/`config.py`/`supabase_rest.py`
-verbatim; never touches `api/batch_predict.py` or any write path. Proven
-locally only; Railway wiring is an explicit, not-yet-done follow-up.
+Vercel — reuses `api/_lib/read_logic.py`/`supabase_rest.py` verbatim (not
+`config.py`'s `load_settings()` — see below); never touches
+`api/batch_predict.py` or any write path. Proven locally only; Railway
+wiring is an explicit, not-yet-done follow-up.
 
-**Credential decision made, not yet applied:** the only Supabase credential
-able to read `carpark_forecast`/`carparks` out of the box is the
+**Credential decision made, partially applied:** the only Supabase
+credential able to read `carpark_forecast`/`carparks` out of the box is the
 service-role key — RLS is deny-by-default with `anon`/`authenticated`
 grants revoked (`db/README.md`, `db/schema.sql`). That key bypasses RLS and
 can write anywhere, so it is not safe to hand to a second deployment.
 Captain's decision: a dedicated `demo_reader` Postgres role, SELECT-only on
 those two tables (`db/schema.sql` section 11) — that migration is written
 but not yet applied to the live project (manual step), and no JWT for that
-role has been minted yet. `demo/app.py` still authenticates via
-`_lib.config.load_settings()`'s `SUPABASE_SERVICE_ROLE_KEY`; switching it to
-read `SUPABASE_DEMO_READER_KEY` instead is a small follow-up once the role
-and key are real. See `demo/README.md`'s Credentials section for the
-step-by-step (JWT minting instructions live as a comment in `db/schema.sql`
-section 11 itself).
+role has been minted yet. `demo/app.py` already reads `SUPABASE_URL` /
+`SUPABASE_DEMO_READER_KEY` directly from the environment (not via
+`_lib.config.load_settings()`, which stays required-service-role-key-only
+for the real `api/forecast.py` path) — missing/blank vars fall through to
+the typed 503 rather than crashing, so the app is deploy-ready before the
+role/key exist. What's left is applying the migration and minting the JWT.
+See `demo/README.md`'s Credentials section for the step-by-step (JWT
+minting instructions live as a comment in `db/schema.sql` section 11
+itself).
 
 ## Maintaining this file
 
