@@ -1,0 +1,6 @@
+# Demo-specific runtime deps for the FastAPI service in demo/app.py.
+# httpx is pinned to match api/requirements.txt (used by the reused
+# api/_lib/supabase_rest.py) -- keep the two in lockstep.
+fastapi==0.115.6
+uvicorn==0.34.0
+httpx==0.28.1
