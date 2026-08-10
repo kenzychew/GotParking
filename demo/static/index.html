@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GotParking demo — forecast viewer</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<main>
+  <h1>GotParking — forecast demo</h1>
+  <p class="subtitle">
+    A read-only demo front end for the same public forecast data served at
+    <a href="https://gotparking.vercel.app" target="_blank" rel="noopener">gotparking.vercel.app</a>.
+    Reuses the identical read logic; just a different web framework gluing it in.
+  </p>
+  <p id="status">Loading forecast…</p>
+  <p id="generated-at" class="generated-at"></p>
+  <ul id="carparks" class="carparks"></ul>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

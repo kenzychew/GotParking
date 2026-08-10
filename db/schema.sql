@@ -702,3 +702,74 @@ on conflict (carpark_id) do nothing;
 insert into public.model_config (singleton, active_model_version)
 values (true, null)
 on conflict (singleton) do nothing;
+
+-- ----------------------------------------------------------------------------
+-- 11) demo_reader -- dedicated read-only role for demo/ (PR #2)
+-- ----------------------------------------------------------------------------
+-- demo/ (a second, portfolio-consistent FastAPI front end for the same public
+-- forecast data, meant to run on Railway -- see demo/README.md) reuses
+-- api/_lib/read_logic.py's read of carpark_forecast/carparks. Section 8 above
+-- revokes anon/authenticated from both tables, so the ONLY key that could
+-- read them before this section was the service-role key -- which bypasses
+-- RLS and can write anywhere, not safe to hand to a second deployment.
+--
+-- Captain's decision (see demo/README.md "Credentials"): a dedicated
+-- Postgres role, SELECT-only on exactly these two tables, kept separate from
+-- both anon and service_role. This section only creates the role, its
+-- grants, and its RLS policies -- it does NOT mint the key demo/ actually
+-- authenticates with. Manual steps after applying this section (paste into
+-- Supabase SQL Editor and Run, same as the rest of this file):
+--   1. Generate a JWT signed with this project's JWT secret (Project
+--      Settings -> API) whose payload includes `"role": "demo_reader"`
+--      (plus the usual `"iss": "supabase"`, an `exp`, etc.) -- e.g. via
+--      https://supabase.com/docs/guides/api/creating-routes#custom-schemas
+--      or jwt.io with the project secret. There is no dashboard button for
+--      this; it's a manually-crafted JWT, same mechanism Supabase uses for
+--      the anon/service_role keys themselves.
+--   2. Set that JWT as SUPABASE_DEMO_READER_KEY wherever demo/ runs (Railway
+--      env vars for a real deploy, or a local .env for testing against your
+--      own project) -- see demo/README.md for the corresponding demo/app.py
+--      follow-up needed to actually read this env var name (not part of
+--      this migration).
+do $$
+begin
+    if not exists (select 1 from pg_roles where rolname = 'demo_reader') then
+        -- nologin: PostgREST never connects AS this role, it SET ROLEs into
+        -- it from the `authenticator` connection role based on the JWT's
+        -- `role` claim (same mechanism as anon/authenticated). noinherit:
+        -- this role's privileges are exactly its own explicit grants below,
+        -- nothing inherited from PUBLIC or elsewhere.
+        create role demo_reader nologin noinherit;
+    end if;
+end
+$$;
+
+comment on role demo_reader is
+    'Read-only role for demo/''s Railway service (PR #2): SELECT-only on '
+    'carpark_forecast + carparks, granted to authenticator so PostgREST can '
+    'switch into it via a JWT''s role claim. Never grant this role INSERT/'
+    'UPDATE/DELETE, and never grant it membership in service_role.';
+
+-- Lets PostgREST (connecting as `authenticator`) SET ROLE into demo_reader
+-- when a request's JWT carries `"role": "demo_reader"`.
+grant demo_reader to authenticator;
+
+grant usage on schema public to demo_reader;
+grant select on public.carpark_forecast to demo_reader;
+grant select on public.carparks to demo_reader;
+
+-- RLS is already enabled on both tables (section 8) with no policies, which
+-- denies every role, including this one, by default -- these policies are
+-- what actually opens read access for demo_reader specifically. drop-then-
+-- create keeps this idempotent (Postgres has no CREATE POLICY IF NOT EXISTS).
+drop policy if exists demo_reader_select on public.carpark_forecast;
+create policy demo_reader_select
+    on public.carpark_forecast for select
+    to demo_reader
+    using (true);
+
+drop policy if exists demo_reader_select on public.carparks;
+create policy demo_reader_select
+    on public.carparks for select
+    to demo_reader
+    using (true);

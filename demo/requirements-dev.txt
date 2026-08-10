@@ -1,0 +1,2 @@
+# Dev-only deps for running demo/tests/ locally -- not deployed to Railway.
+pytest==8.3.4

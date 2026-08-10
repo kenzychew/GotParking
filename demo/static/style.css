@@ -1,0 +1,102 @@
+:root {
+  color-scheme: light dark;
+  --fg: #1a1a1a;
+  --bg: #fafafa;
+  --muted: #666;
+  --border: #ddd;
+  --plenty: #1a7f37;
+  --limited: #b08800;
+  --very-limited: #cf222e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #eaeaea;
+    --bg: #16181c;
+    --muted: #9a9a9a;
+    --border: #333;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 2rem 1rem;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+h1 {
+  margin-bottom: 0.25rem;
+}
+
+.subtitle {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.generated-at {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.carparks {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+}
+
+.carpark {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 0.75rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.name {
+  font-weight: 600;
+  grid-column: 1 / 2;
+}
+
+.tier {
+  grid-column: 2 / 3;
+  justify-self: end;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.tier-plenty {
+  color: #fff;
+  background: var(--plenty);
+}
+
+.tier-limited {
+  color: #fff;
+  background: var(--limited);
+}
+
+.tier-very_limited {
+  color: #fff;
+  background: var(--very-limited);
+}
+
+.lots,
+.state {
+  grid-column: 1 / 3;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
