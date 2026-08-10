@@ -1,24 +1,3 @@
-# Railway service config for the demo/ FastAPI app.
-#
-# Assumes the Railway project's Root Directory setting is left at the repo
-# root (NOT demo/) -- demo/app.py imports api/_lib directly (see its
-# top-of-file comment), so api/_lib must be present in the build context.
-# If Railway's root directory is instead pinned to demo/, that import will
-# fail at deploy time; either keep the root at repo root, or switch to a
-# Dockerfile that COPYs both demo/ and api/_lib/. Left as-is for the
-# Railway-wiring follow-up (out of scope here -- see demo/README.md).
-
-[build]
-builder = "NIXPACKS"
-buildCommand = "pip install -r demo/requirements-demo.txt"
-
-[deploy]
-startCommand = "uvicorn demo.app:app --host 0.0.0.0 --port $PORT"
-# Note: /api/forecast returns a typed 503 whenever Supabase/data is
-# unavailable, same contract as the real endpoint (see root CLAUDE.md's
-# Post-deploy health check note) -- a 503 here means upstream data issues,
-# not necessarily a bad deploy. Railway will still restart on it per
-# restartPolicyType below; revisit if that proves too aggressive.
-healthcheckPath = "/api/forecast"
-healthcheckTimeout = 30
-restartPolicyType = "ON_FAILURE"
+# Moved: Railway only reads railway.toml/railway.json at the repo root, not
+# in subdirectories. The real config now lives at ../railway.toml (repo root).
+# This file is no longer read by Railway; kept only as a pointer.
