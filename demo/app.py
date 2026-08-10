@@ -8,6 +8,11 @@ way `api/forecast.py` does, just glued in through FastAPI instead of
 Vercel's `BaseHTTPRequestHandler`. Same typed-503-never-500 contract, same
 cached whole-payload shape.
 
+Also serves `GET /api/carparks-geo`, a demo-only read (id/name/lat/lng from
+`public.carparks`) that backs the map in `static/`. That endpoint is not
+part of the pinned `/api/forecast` contract and does not touch
+`api/_lib/read_logic.py`.
+
 This service only ever reads already-computed forecasts. It must never
 import, call, or expose `api/batch_predict.py` or any write path -- see
 demo/README.md's "Credentials" section for why the read-only guarantee
@@ -40,6 +45,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="GotParking demo (read-only forecast viewer)")
+
+_GEO_CACHE_CONTROL = "public, s-maxage=300, stale-while-revalidate=60"
 
 
 def _load_demo_reader_settings() -> tuple[str, str] | None:
@@ -84,6 +91,51 @@ def get_forecast() -> JSONResponse:
     return JSONResponse(
         status_code=response.status, content=response.body, headers=response.headers
     )
+
+
+def _geo_unavailable_response() -> JSONResponse:
+    """The typed 503 for the geo endpoint, matching get_forecast's contract:
+    any failure (missing credentials, unreachable Supabase, anything else)
+    returns this instead of a raw 500.
+    """
+    return JSONResponse(
+        status_code=503,
+        content={"error": "geo_unavailable", "message": "Carpark locations temporarily unavailable"},
+    )
+
+
+@app.get("/api/carparks-geo")
+def get_carparks_geo() -> JSONResponse:
+    """Serve carpark id/name/coordinates for the demo's map, demo-only.
+
+    Never touches `api/_lib/read_logic.py`'s pinned `/api/forecast` contract
+    -- this is a separate, demo-only read against `public.carparks` using
+    the same `demo_reader` credentials, joined client-side against
+    `/api/forecast` by `carpark_id`. Same typed-503-never-500 contract:
+    missing credentials or any Supabase failure returns the typed
+    unavailable response, never a crash.
+    """
+    db: SupabaseREST | None = None
+    try:
+        demo_settings = _load_demo_reader_settings()
+        if demo_settings is None:
+            return _geo_unavailable_response()
+        supabase_url, demo_reader_key = demo_settings
+        db = SupabaseREST(supabase_url, demo_reader_key)
+        result = db.select(
+            "carparks", params={"select": "carpark_id,name,latitude,longitude"}
+        )
+        return JSONResponse(
+            status_code=200,
+            content={"carparks": result.rows},
+            headers={"Cache-Control": _GEO_CACHE_CONTROL},
+        )
+    except Exception:
+        logger.exception("carparks-geo: unhandled error")
+        return _geo_unavailable_response()
+    finally:
+        if db is not None:
+            db.close()
 
 
 app.mount(

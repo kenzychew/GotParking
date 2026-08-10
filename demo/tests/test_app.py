@@ -94,3 +94,70 @@ def test_static_frontend_is_served_at_root(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert "GotParking" in response.text
+
+
+def test_carparks_geo_happy_path_returns_rows(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = FakeSupabaseDB(
+        tables={
+            "carparks": [
+                {
+                    "carpark_id": "1",
+                    "name": "Suntec City",
+                    "latitude": 1.2936,
+                    "longitude": 103.8575,
+                },
+                {
+                    "carpark_id": "2",
+                    "name": "No Coordinates Carpark",
+                    "latitude": None,
+                    "longitude": None,
+                },
+            ]
+        }
+    )
+    monkeypatch.setenv("SUPABASE_URL", "https://x")
+    monkeypatch.setenv("SUPABASE_DEMO_READER_KEY", "k")
+    monkeypatch.setattr(demo_app, "SupabaseREST", lambda *a, **k: db)
+
+    response = client.get("/api/carparks-geo")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["carparks"] == [
+        {"carpark_id": "1", "name": "Suntec City", "latitude": 1.2936, "longitude": 103.8575},
+        {"carpark_id": "2", "name": "No Coordinates Carpark", "latitude": None, "longitude": None},
+    ]
+
+
+def test_carparks_geo_missing_env_yields_typed_503_not_a_crash(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_DEMO_READER_KEY", raising=False)
+
+    response = client.get("/api/carparks-geo")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "geo_unavailable",
+        "message": "Carpark locations temporarily unavailable",
+    }
+
+
+def test_carparks_geo_supabase_failure_yields_typed_503_not_a_crash(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = FakeSupabaseDB(fail_tables={"carparks"})
+    monkeypatch.setenv("SUPABASE_URL", "https://x")
+    monkeypatch.setenv("SUPABASE_DEMO_READER_KEY", "k")
+    monkeypatch.setattr(demo_app, "SupabaseREST", lambda *a, **k: db)
+
+    response = client.get("/api/carparks-geo")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "geo_unavailable",
+        "message": "Carpark locations temporarily unavailable",
+    }

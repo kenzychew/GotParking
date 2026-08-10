@@ -132,6 +132,17 @@ See `demo/README.md`'s Credentials section for the step-by-step (JWT
 minting instructions live as a comment in `db/schema.sql` section 11
 itself).
 
+`demo/static/` is a Leaflet (CDN, no build step) map plus list view, styled
+to match `portfolio-hub`'s design tokens (`app/globals.css`: Fraunces /
+Public Sans / JetBrains Mono, warm off-white/near-black palette) — that
+project lives at a sibling checkout, not inside this repo. The map is
+backed by a demo-only `GET /api/carparks-geo` in `demo/app.py` (id/name/
+lat/lng from `public.carparks`, same `demo_reader` credentials and typed
+503-never-500 contract as `/api/forecast`); it is not part of the pinned
+`/api/forecast` contract and never touches `api/_lib/read_logic.py`. Tier
+marker colors are the same hex values as `frontend/src/lib/colorTokens.ts`'s
+light theme — keep them in sync if that file's values ever change.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

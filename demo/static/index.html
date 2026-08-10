@@ -4,20 +4,54 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>GotParking demo — forecast viewer</title>
+<meta
+  name="description"
+  content="Read-only demo of GotParking's carpark availability forecast, plotted on a map."
+/>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+  rel="stylesheet"
+/>
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+  crossorigin=""
+/>
 <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-<main>
-  <h1>GotParking — forecast demo</h1>
-  <p class="subtitle">
-    A read-only demo front end for the same public forecast data served at
-    <a href="https://gotparking.vercel.app" target="_blank" rel="noopener">gotparking.vercel.app</a>.
-    Reuses the identical read logic; just a different web framework gluing it in.
-  </p>
-  <p id="status">Loading forecast…</p>
-  <p id="generated-at" class="generated-at"></p>
-  <ul id="carparks" class="carparks"></ul>
+<header class="site-header">
+  <div class="site-header-inner">
+    <h1>GotParking</h1>
+    <p class="subtitle">
+      A read-only demo of the same public forecast data served at
+      <a href="https://gotparking.vercel.app" target="_blank" rel="noopener">gotparking.vercel.app</a>,
+      plotted on a map. Same read logic, a different web framework (FastAPI on Railway) gluing it in.
+    </p>
+  </div>
+</header>
+<main class="layout">
+  <section class="map-panel">
+    <div id="map" class="map"></div>
+    <p id="map-status" class="map-status"></p>
+  </section>
+  <aside class="list-panel">
+    <p id="status">Loading forecast…</p>
+    <p id="generated-at" class="generated-at"></p>
+    <ul id="carparks" class="carparks"></ul>
+  </aside>
 </main>
+<footer class="site-footer">
+  <p id="attribution" class="attribution"></p>
+</footer>
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin=""
+></script>
 <script src="/app.js"></script>
 </body>
 </html>

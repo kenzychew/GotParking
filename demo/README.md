@@ -6,9 +6,14 @@ This reuses `api/_lib/read_logic.py`'s `handle_forecast_read` (and
 `_lib/config.py` / `_lib/supabase_rest.py`) verbatim through a FastAPI route
 in `app.py` -- same business logic, same pinned payload shape, same typed
 503-never-500 contract as the real `GET /api/forecast` on
-[gotparking.vercel.app](https://gotparking.vercel.app). `static/` is a
-minimal list-view frontend (`index.html` + `app.js` + `style.css`) that
-fetches that route.
+[gotparking.vercel.app](https://gotparking.vercel.app). `app.py` also
+serves a demo-only `GET /api/carparks-geo` (id/name/lat/lng from
+`public.carparks`, same typed-503-never-500 contract, same `demo_reader`
+credentials) that backs the map -- it is not part of the pinned
+`/api/forecast` contract and never touches `api/_lib/read_logic.py`.
+`static/` is a Leaflet map (colored by tier, joined client-side against
+`/api/forecast` by `carpark_id`) plus a list view (`index.html` + `app.js`
++ `style.css`) that fetches both routes.
 
 This service is read-only by construction: it never imports, calls, or
 routes to `api/batch_predict.py` or any write path.
@@ -92,8 +97,8 @@ pointed at a local PostgREST-compatible stub.
 
 ```
 demo/
-  app.py                  FastAPI: GET /api/forecast (reuses _lib/read_logic.py), mounts static/
-  static/                 minimal list-view frontend
+  app.py                  FastAPI: GET /api/forecast (reuses _lib/read_logic.py) + GET /api/carparks-geo (demo-only), mounts static/
+  static/                 map + list frontend (Leaflet via CDN, no build step)
   requirements-demo.txt   pinned runtime deps
   requirements-dev.txt    pinned test-only deps (pytest)
   railway.toml            Railway build/deploy config (see its header comment on root-directory assumptions)
