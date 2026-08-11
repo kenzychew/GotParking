@@ -17,7 +17,7 @@ function mockFetchAlwaysResolves(body: unknown, status = 200): void {
 }
 
 async function selectViaSearch(user: UserEvent, typed: string, buttonName: string): Promise<void> {
-  const input = screen.getByLabelText("Search for a mall");
+  const input = screen.getByLabelText("Search a mall, or enter your postal code for what's nearby");
   await user.clear(input);
   await user.type(input, typed);
   const suggestion = await screen.findByRole("button", { name: buttonName });
@@ -37,9 +37,9 @@ describe("landing state", () => {
     mockFetchAlwaysResolves(MOCK_FRESH_PAYLOAD);
     render(<App />);
 
-    expect(screen.getByLabelText("Search for a mall")).toBeInTheDocument();
+    expect(screen.getByLabelText("Search a mall, or enter your postal code for what's nearby")).toBeInTheDocument();
     expect(
-      screen.getByText("Search a mall or tap a shortcut to see its forecast"),
+      screen.getByText("Search a mall, enter your postal code, or tap a shortcut to see its forecast"),
     ).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Suntec City" })).not.toBeInTheDocument();
   });
@@ -135,7 +135,7 @@ describe("required test slice", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.type(screen.getByLabelText("Search for a mall"), "Nonexistent Mall Name");
+    await user.type(screen.getByLabelText("Search a mall, or enter your postal code for what's nearby"), "Nonexistent Mall Name");
 
     expect(
       await screen.findByText(
@@ -155,7 +155,7 @@ describe("required test slice", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.type(screen.getByLabelText("Search for a mall"), "Suntec");
+    await user.type(screen.getByLabelText("Search a mall, or enter your postal code for what's nearby"), "Suntec");
     const suggestion = await screen.findByRole("button", { name: "Suntec City" });
 
     // Two clicks fired back-to-back on the same target, well inside the
@@ -233,8 +233,8 @@ describe("share link", () => {
       await screen.findByText("Carpark not found - this link may be outdated or invalid."),
     ).toBeInTheDocument();
     // The rest of the app still works underneath the error banner.
-    expect(screen.getByText("Search a mall or tap a shortcut to see its forecast")).toBeInTheDocument();
-    expect(screen.getByLabelText("Search for a mall")).toBeInTheDocument();
+    expect(screen.getByText("Search a mall, enter your postal code, or tap a shortcut to see its forecast")).toBeInTheDocument();
+    expect(screen.getByLabelText("Search a mall, or enter your postal code for what's nearby")).toBeInTheDocument();
   });
 
   it("the share button copies the current carpark's link to the clipboard", async () => {
