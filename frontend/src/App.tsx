@@ -71,7 +71,9 @@ export function App() {
         />
 
         {selectedCarparkId === null ? (
-          <p className="landing-prompt">Search a mall or tap a shortcut to see its forecast</p>
+          <p className="landing-prompt">
+            Search a mall, enter your postal code, or tap a shortcut to see its forecast
+          </p>
         ) : (
           <ForecastCard
             carparkId={selectedCarparkId}
