@@ -45,7 +45,7 @@ export function SearchPanel({ onSelect }: SearchPanelProps) {
   return (
     <div className="search-field">
       <label htmlFor="carpark-search" className="search-field__label">
-        Search a mall, or enter your postal code for what's nearby
+        Destination, or postal code?
       </label>
       <input
         id="carpark-search"

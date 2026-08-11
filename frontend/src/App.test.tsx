@@ -17,7 +17,7 @@ function mockFetchAlwaysResolves(body: unknown, status = 200): void {
 }
 
 async function selectViaSearch(user: UserEvent, typed: string, buttonName: string): Promise<void> {
-  const input = screen.getByLabelText("Search a mall, or enter your postal code for what's nearby");
+  const input = screen.getByLabelText("Destination, or postal code?");
   await user.clear(input);
   await user.type(input, typed);
   const suggestion = await screen.findByRole("button", { name: buttonName });
@@ -37,7 +37,7 @@ describe("landing state", () => {
     mockFetchAlwaysResolves(MOCK_FRESH_PAYLOAD);
     render(<App />);
 
-    expect(screen.getByLabelText("Search a mall, or enter your postal code for what's nearby")).toBeInTheDocument();
+    expect(screen.getByLabelText("Destination, or postal code?")).toBeInTheDocument();
     expect(
       screen.getByText("Search a mall, enter your postal code, or tap a shortcut to see its forecast"),
     ).toBeInTheDocument();
@@ -135,7 +135,7 @@ describe("required test slice", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.type(screen.getByLabelText("Search a mall, or enter your postal code for what's nearby"), "Nonexistent Mall Name");
+    await user.type(screen.getByLabelText("Destination, or postal code?"), "Nonexistent Mall Name");
 
     expect(
       await screen.findByText(
@@ -155,7 +155,7 @@ describe("required test slice", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.type(screen.getByLabelText("Search a mall, or enter your postal code for what's nearby"), "Suntec");
+    await user.type(screen.getByLabelText("Destination, or postal code?"), "Suntec");
     const suggestion = await screen.findByRole("button", { name: "Suntec City" });
 
     // Two clicks fired back-to-back on the same target, well inside the
@@ -234,7 +234,7 @@ describe("share link", () => {
     ).toBeInTheDocument();
     // The rest of the app still works underneath the error banner.
     expect(screen.getByText("Search a mall, enter your postal code, or tap a shortcut to see its forecast")).toBeInTheDocument();
-    expect(screen.getByLabelText("Search a mall, or enter your postal code for what's nearby")).toBeInTheDocument();
+    expect(screen.getByLabelText("Destination, or postal code?")).toBeInTheDocument();
   });
 
   it("the share button copies the current carpark's link to the clipboard", async () => {
