@@ -6,7 +6,7 @@ GotParking forecasts Singapore carpark availability ("~12 lots free in 20 min") 
 It is a free public product for drivers, built entirely on open government data, currently covering 268 carparks across the island.
 
 The forecasting model is classical predictive ML: a LightGBM regressor pretrained on the SINPA research dataset, then fine-tuned weekly on live 2026 availability polls.
-Every candidate model must beat both a historical-average baseline and a persistence baseline through a two-phase promotion gate before it serves a single forecast.
+The first promoted model had to beat both a historical-average baseline and a persistence baseline by a wide margin; every retrain since is gated against the currently-serving model instead, promoting unless it regresses MAE by more than 2%.
 The first promoted model went live on 2026-07-11 and every covered carpark now serves real ML forecasts; during the initial cold-start window the app served live counts with forecasts marked as warming up, never a fabricated number.
 
 ## Data sources
@@ -28,20 +28,20 @@ poller (Cloudflare Worker) ----> Supabase Postgres (ap-southeast-1)
 /api/batch_predict (Vercel, sin1) ----+     /api/forecast ----> frontend (PWA)
 
 training (GitHub Actions, weekly) --> trains LightGBM on accumulated polls
-                                      --> two-phase gate vs baselines --> promotes or holds
+                                      --> two-phase gate (baselines first time, incumbent after) --> promotes or holds
 ```
 
 - A Cloudflare Worker polls LTA DataMall every 5 minutes, stores availability in Supabase, and triggers batch prediction.
 - Batch prediction runs LightGBM inference for all carparks in one Vercel Python function pinned to Singapore (`sin1`) and writes forecasts back.
 - `/api/forecast` and `/api/geocode_postal` are the two public endpoints: a cached read of the latest forecasts, and a server-side postal-code lookup that keeps OneMap credentials off the client. `/api/batch_predict` is secret-gated and only callable by the poller.
-- A weekly GitHub Actions job retrains on the growing live history and only promotes models that clear the baseline gate.
+- A weekly GitHub Actions job retrains on the growing live history and only promotes models that clear the gate: baselines for the first promotion, the currently-serving incumbent for every retrain after.
 - The poller, batch prediction, and the training job all report to healthchecks.io dead-man's-switch checks, so silent failure pages a human.
 
 ## Repository layout
 
 - `db/` - Supabase schema and RLS policies.
 - `poller/` - Cloudflare Worker: 5-minute LTA DataMall polling, batch-prediction trigger.
-- `training/` - weekly GitHub Actions training job: SINPA-pretrained LightGBM, two-phase promotion gate, benchmarked against historical-average and persistence baselines.
+- `training/` - weekly GitHub Actions training job: SINPA-pretrained LightGBM, two-phase promotion gate (first promotion benchmarked against historical-average and persistence baselines, later retrains gated against the incumbent).
 - `api/` - Vercel Python functions: poller-triggered batch forecasts, the public cached read endpoint, and the postal-code geocoding proxy.
 - `frontend/` - mobile-first installable PWA with offline cache.
 - `scripts/` - carpark coverage-expansion tooling: LTA-feed whitelist matching with a mandatory human sign-off gate, variance validation, and seed-list regeneration.
