@@ -167,6 +167,25 @@ neither is part of the pinned `/api/forecast` contract or touches
 as `frontend/src/lib/colorTokens.ts`'s light theme, keep them in sync if
 that file's values ever change.
 
+The search box also does free-text destination search (e.g. "orchard",
+not just a known carpark name), debounced against a demo-only `GET
+/api/geocode-search?q=` in `demo/app.py`. This calls
+`api/_lib/onemap_client.py`'s `search_location` -- a multi-result sibling
+of `search_postal_code` (used by the real `api/geocode_postal.py`, which
+this endpoint never touches), since a free-text place name is often
+ambiguous in a way a postal code isn't. Needs its own `ONEMAP_EMAIL`/
+`ONEMAP_PASSWORD` env vars (same OneMap Singapore account the real app
+uses) and keeps its own `TokenCache` instance, not
+`onemap_client.get_shared_token_cache()`'s process-wide singleton, since
+this demo runs as a separate process. Selecting a destination candidate
+ranks every carpark by real haversine distance from that point (no
+forecast/tier/chart exists for an arbitrary destination) via
+`selectDestination` in `app.js`, shown in `#destination-panel` instead of
+the single-carpark `#primary-result-panel`/`#detail-panel`. Missing
+credentials or any OneMap failure degrades this endpoint to a typed 503
+without ever affecting the client-side carpark-name search, which needs
+no network call.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

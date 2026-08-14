@@ -12,6 +12,7 @@ from _lib.onemap_client import (
     OneMapUnavailableError,
     TokenCache,
     fetch_token,
+    search_location,
     search_postal_code,
 )
 from tests.conftest import RoutedTransportFactory, SequentialTransportFactory
@@ -109,6 +110,72 @@ class TestSearchPostalCode:
         assert result is not None
         assert result.building_name == ""
         assert result.latitude == pytest.approx(1.37026)
+
+
+class TestSearchLocation:
+    def test_returns_multiple_candidates(self, make_routed_transport: RoutedTransportFactory) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers["authorization"] == "tok-123"
+            assert "searchVal=orchard" in str(request.url)
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {"BUILDING": "ORCHARD ROAD", "LATITUDE": "1.30400", "LONGITUDE": "103.83180"},
+                        {"BUILDING": "ORCHARD CENTRAL", "LATITUDE": "1.30097", "LONGITUDE": "103.83905"},
+                        {"BUILDING": "ORCHARD GATEWAY", "LATITUDE": "1.30130", "LONGITUDE": "103.83790"},
+                    ]
+                },
+            )
+
+        results = search_location("tok-123", "orchard", _client(make_routed_transport(handler)))
+
+        assert [r.building_name for r in results] == ["ORCHARD ROAD", "ORCHARD CENTRAL", "ORCHARD GATEWAY"]
+        assert results[0].latitude == pytest.approx(1.30400)
+
+    def test_truncates_to_limit(self, make_routed_transport: RoutedTransportFactory) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {"BUILDING": f"PLACE {i}", "LATITUDE": "1.3", "LONGITUDE": "103.8"} for i in range(10)
+                    ]
+                },
+            )
+
+        results = search_location("tok-123", "place", _client(make_routed_transport(handler)), limit=3)
+
+        assert len(results) == 3
+        assert [r.building_name for r in results] == ["PLACE 0", "PLACE 1", "PLACE 2"]
+
+    def test_returns_empty_list_when_nothing_found(self, make_routed_transport: RoutedTransportFactory) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"results": []})
+
+        results = search_location("tok-123", "zzzznotarealplace", _client(make_routed_transport(handler)))
+
+        assert results == []
+
+    def test_raises_unavailable_on_transport_failure(
+        self, make_sequential_transport: SequentialTransportFactory
+    ) -> None:
+        transport = make_sequential_transport([httpx.ConnectError("refused")])
+
+        with pytest.raises(OneMapUnavailableError):
+            search_location("tok-123", "orchard", _client(transport))
+
+    def test_cleans_nil_building_names(self, make_routed_transport: RoutedTransportFactory) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"results": [{"BUILDING": "NIL", "LATITUDE": "1.37026", "LONGITUDE": "103.8395"}]},
+            )
+
+        results = search_location("tok-123", "some road", _client(make_routed_transport(handler)))
+
+        assert results[0].building_name == ""
+        assert results[0].latitude == pytest.approx(1.37026)
 
 
 class TestTokenCache:

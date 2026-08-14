@@ -115,11 +115,20 @@ Supabase project (pointing `SUPABASE_DEMO_READER_KEY` at any key with read
 access there, never production's service-role key), or with `SUPABASE_URL`
 pointed at a local PostgREST-compatible stub.
 
+`GET /api/geocode-search` (destination search suggestions) needs its own
+`ONEMAP_EMAIL`/`ONEMAP_PASSWORD` -- the same OneMap Singapore account
+already used by `api/geocode_postal.py`, read directly from the
+environment and cached in this process's own `TokenCache` instance (see
+`api/_lib/onemap_client.py`), never the real app's process-wide singleton.
+Missing/invalid credentials or any OneMap failure degrades to the typed
+503; the carpark-name search in `static/app.js` keeps working regardless,
+since it never depends on this endpoint.
+
 ## Layout
 
 ```
 demo/
-  app.py                  FastAPI: GET /api/forecast (reuses _lib/read_logic.py) + GET /api/carparks-geo + GET /api/carpark-baseline/{id} (both demo-only), mounts static/
+  app.py                  FastAPI: GET /api/forecast (reuses _lib/read_logic.py) + GET /api/carparks-geo + GET /api/carpark-baseline/{id} + GET /api/geocode-search (all three demo-only), mounts static/
   static/                 destination-search frontend (Leaflet map behind a toggle, via CDN, no build step)
   requirements-demo.txt   pinned runtime deps
   requirements-dev.txt    pinned test-only deps (pytest)

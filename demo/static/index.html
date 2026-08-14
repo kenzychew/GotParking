@@ -57,7 +57,7 @@
 
   <section id="result-section" class="result-columns" hidden>
     <div class="result-main">
-      <article class="primary-result">
+      <article id="primary-result-panel" class="primary-result">
         <div class="primary-result-head">
           <h2 id="primary-name"></h2>
           <span id="primary-tier" class="tier"></span>
@@ -66,13 +66,19 @@
         <p id="primary-state" class="state"></p>
       </article>
 
-      <article class="detail-panel">
+      <article id="detail-panel" class="detail-panel">
         <h3>Typical availability today</h3>
         <div id="chart-container" class="chart-container"></div>
       </article>
+
+      <article id="destination-panel" class="destination-panel" hidden>
+        <h2 id="destination-name"></h2>
+        <p class="destination-sub">Ranked by distance from this location.</p>
+        <ul id="destination-list" class="alternatives-list"></ul>
+      </article>
     </div>
 
-    <aside class="result-side">
+    <aside id="result-side" class="result-side">
       <h3>Nearby alternatives</h3>
       <ul id="alternatives-list" class="alternatives-list"></ul>
     </aside>
