@@ -165,6 +165,7 @@ class SupabaseREST:
         base_url: str,
         service_role_key: str,
         *,
+        apikey: str | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 10.0,
     ) -> None:
@@ -173,9 +174,18 @@ class SupabaseREST:
         Args:
             base_url: Supabase project base URL, e.g.
                 "https://xyz.supabase.co" (no trailing slash).
-            service_role_key: Service-role API key; sent as both the
-                ``apikey`` header and a bearer ``Authorization`` header,
-                bypassing RLS.
+            service_role_key: Bearer key sent as the ``Authorization``
+                header. Also used as the ``apikey`` header unless
+                ``apikey`` is given.
+            apikey: Optional override for the ``apikey`` header. A
+                Supabase-issued service-role or anon/publishable key
+                doubles as both a Kong-recognized API key and a JWT with a
+                role claim, so the default (reusing ``service_role_key``
+                for both headers) is correct for it. A hand-signed JWT for
+                a custom Postgres role (e.g. ``demo_reader``) is only the
+                second of those -- Kong rejects it as the ``apikey``
+                header before PostgREST ever sees it -- so callers using
+                such a JWT must pass a separate, Kong-recognized key here.
             transport: Optional httpx transport override. Tests pass an
                 ``httpx.MockTransport`` here; production leaves this None
                 to use the real network transport.
@@ -183,7 +193,7 @@ class SupabaseREST:
         """
         self.base_url = base_url.rstrip("/")
         self._headers = {
-            "apikey": service_role_key,
+            "apikey": apikey if apikey is not None else service_role_key,
             "Authorization": f"Bearer {service_role_key}",
             "Content-Type": "application/json",
         }
