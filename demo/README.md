@@ -6,14 +6,21 @@ This reuses `api/_lib/read_logic.py`'s `handle_forecast_read` (and
 `_lib/config.py` / `_lib/supabase_rest.py`) verbatim through a FastAPI route
 in `app.py` -- same business logic, same pinned payload shape, same typed
 503-never-500 contract as the real `GET /api/forecast` on
-[gotparking.vercel.app](https://gotparking.vercel.app). `app.py` also
-serves a demo-only `GET /api/carparks-geo` (id/name/lat/lng from
-`public.carparks`, same typed-503-never-500 contract, same `demo_reader`
-credentials) that backs the map -- it is not part of the pinned
-`/api/forecast` contract and never touches `api/_lib/read_logic.py`.
-`static/` is a Leaflet map (colored by tier, joined client-side against
-`/api/forecast` by `carpark_id`) plus a list view (`index.html` + `app.js`
-+ `style.css`) that fetches both routes.
+[gotparking.vercel.app](https://gotparking.vercel.app). `app.py` also serves two demo-only reads, same typed-503-never-500 contract
+and same `demo_reader` credentials, neither part of the pinned
+`/api/forecast` contract and neither touching `api/_lib/read_logic.py`:
+`GET /api/carparks-geo` (id/name/lat/lng from `public.carparks`, used for
+client-side distance sorting) and `GET /api/carpark-baseline/{carpark_id}`
+(today's SGT-day-of-week typical-availability curve from
+`public.carpark_baseline`, for the detail panel's trend chart -- requires
+the `db/schema.sql` section 11b grant to be applied to the live project;
+until then it degrades to the typed 503).
+
+`static/` is a destination-search-led flow (search box, selected-carpark
+detail with a trend chart, nearby alternatives ranked by client-side
+haversine distance) -- `index.html` + `app.js` + `style.css`, joined
+client-side against `/api/forecast` by `carpark_id`. The original Leaflet
+map is still there behind a "Show map" toggle, not the default view.
 
 This service is read-only by construction: it never imports, calls, or
 routes to `api/batch_predict.py` or any write path.
@@ -62,11 +69,15 @@ role**, separate from both `anon` and `service_role`. The migration is
 `db/schema.sql` section 11 (`demo_reader`): `SELECT`-only grants plus RLS
 policies scoped to exactly `carpark_forecast` and `carparks`, granted to
 `authenticator` so PostgREST can switch into it via a JWT's `role` claim --
-same mechanism Supabase uses for `anon`/`authenticated` themselves. That
-section only creates the role and its grants; it does **not** mint the key.
-Applying it is a manual step for whoever runs it against the live project
-(paste into the Supabase SQL Editor, same as the rest of `schema.sql`) --
-this PR does not execute it.
+same mechanism Supabase uses for `anon`/`authenticated` themselves. Section
+11b extends the same role with the same pattern to `carpark_baseline`
+(small, precomputed, serving-safe -- never the raw `carpark_history`
+table), for the destination-search redesign's trend chart. Both sections
+only create the role and its grants; neither mints the key. Applying them
+is a manual step for whoever runs it against the live project (paste into
+the Supabase SQL Editor, same as the rest of `schema.sql`) -- this PR does
+not execute it, and until section 11b is applied,
+`GET /api/carpark-baseline/{carpark_id}` degrades to its typed 503.
 
 `demo/app.py` reads its Supabase credentials directly from
 `SUPABASE_URL`/**`SUPABASE_DEMO_READER_KEY`** (not through
@@ -97,8 +108,8 @@ pointed at a local PostgREST-compatible stub.
 
 ```
 demo/
-  app.py                  FastAPI: GET /api/forecast (reuses _lib/read_logic.py) + GET /api/carparks-geo (demo-only), mounts static/
-  static/                 map + list frontend (Leaflet via CDN, no build step)
+  app.py                  FastAPI: GET /api/forecast (reuses _lib/read_logic.py) + GET /api/carparks-geo + GET /api/carpark-baseline/{id} (both demo-only), mounts static/
+  static/                 destination-search frontend (Leaflet map behind a toggle, via CDN, no build step)
   requirements-demo.txt   pinned runtime deps
   requirements-dev.txt    pinned test-only deps (pytest)
   railway.toml            Railway build/deploy config (see its header comment on root-directory assumptions)

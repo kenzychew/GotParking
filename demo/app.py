@@ -9,9 +9,11 @@ Vercel's `BaseHTTPRequestHandler`. Same typed-503-never-500 contract, same
 cached whole-payload shape.
 
 Also serves `GET /api/carparks-geo`, a demo-only read (id/name/lat/lng from
-`public.carparks`) that backs the map in `static/`. That endpoint is not
-part of the pinned `/api/forecast` contract and does not touch
-`api/_lib/read_logic.py`.
+`public.carparks`) used for client-side distance sorting in `static/`, and
+`GET /api/carpark-baseline/{carpark_id}`, a demo-only read of the
+precomputed `public.carpark_baseline` table that backs the detail panel's
+trend chart. Neither endpoint is part of the pinned `/api/forecast`
+contract, and neither touches `api/_lib/read_logic.py`.
 
 This service only ever reads already-computed forecasts. It must never
 import, call, or expose `api/batch_predict.py` or any write path -- see
@@ -24,6 +26,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -39,6 +42,7 @@ if str(_API_DIR) not in sys.path:
     sys.path.insert(0, str(_API_DIR))
 
 from _lib.read_logic import ReadDeps, handle_forecast_read, unavailable_response
+from _lib.sg_time import sgt_parts
 from _lib.supabase_rest import SupabaseREST
 
 logging.basicConfig(level=logging.INFO)
@@ -133,6 +137,79 @@ def get_carparks_geo() -> JSONResponse:
     except Exception:
         logger.exception("carparks-geo: unhandled error")
         return _geo_unavailable_response()
+    finally:
+        if db is not None:
+            db.close()
+
+
+_BASELINE_CACHE_CONTROL = "public, s-maxage=90, stale-while-revalidate=60"
+
+
+def _baseline_unavailable_response() -> JSONResponse:
+    """The typed 503 for the baseline endpoint, matching the other demo-only
+    endpoints' contract: missing credentials, permission denied (e.g. the
+    `carpark_baseline` grant in `db/schema.sql` section 11b not yet applied
+    to the live project), or any other Supabase failure returns this instead
+    of a raw 500.
+    """
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "baseline_unavailable",
+            "message": "Typical availability data temporarily unavailable",
+        },
+    )
+
+
+@app.get("/api/carpark-baseline/{carpark_id}")
+def get_carpark_baseline(carpark_id: str) -> JSONResponse:
+    """Serve one carpark's typical-availability-by-time-of-day curve.
+
+    Backs the detail panel's trend chart in `static/`: the 96 15-minute
+    `slot_of_day` rows of `public.carpark_baseline` for today's SGT
+    day-of-week, plus the current SGT slot index so the frontend can mark
+    "now" on the curve. `sgt_parts` (shared with the batch-predict feature
+    contract) is the single source of truth for the SGT (dow, slot_of_day)
+    computation -- see `api/_lib/sg_time.py`.
+
+    An unknown carpark_id, or one with no baseline rows yet, is not a
+    failure: PostgREST simply returns zero rows, so this responds 200 with
+    an empty `slots` array rather than a 503 -- the frontend distinguishes
+    "no data for this carpark" from "the endpoint is down". Same typed-503-
+    never-500 contract as `get_forecast`/`get_carparks_geo` for actual
+    failures (missing credentials, permission denied, unreachable Supabase,
+    anything else).
+    """
+    db: SupabaseREST | None = None
+    try:
+        demo_settings = _load_demo_reader_settings()
+        if demo_settings is None:
+            return _baseline_unavailable_response()
+        supabase_url, demo_reader_key = demo_settings
+        db = SupabaseREST(supabase_url, demo_reader_key)
+        dow, current_slot_of_day = sgt_parts(datetime.now(timezone.utc))
+        result = db.select(
+            "carpark_baseline",
+            params={
+                "select": "slot_of_day,avg_available_lots",
+                "carpark_id": f"eq.{carpark_id}",
+                "dow": f"eq.{dow}",
+                "order": "slot_of_day.asc",
+            },
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "carpark_id": carpark_id,
+                "dow": dow,
+                "current_slot_of_day": current_slot_of_day,
+                "slots": result.rows,
+            },
+            headers={"Cache-Control": _BASELINE_CACHE_CONTROL},
+        )
+    except Exception:
+        logger.exception("carpark-baseline: unhandled error")
+        return _baseline_unavailable_response()
     finally:
         if db is not None:
             db.close()
