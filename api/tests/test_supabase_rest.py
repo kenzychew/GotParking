@@ -26,6 +26,49 @@ def _client(transport: httpx.MockTransport) -> SupabaseREST:
     return SupabaseREST(BASE_URL, SERVICE_KEY, transport=transport)
 
 
+class TestClientInitHeaders:
+    """Tests for the apikey/Authorization header wiring in __init__()."""
+
+    def test_default_apikey_matches_authorization_bearer_key(
+        self,
+        make_routed_transport: RoutedTransportFactory,
+    ) -> None:
+        seen: dict[str, str] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["apikey"] = request.headers["apikey"]
+            seen["authorization"] = request.headers["authorization"]
+            return httpx.Response(200, json=[])
+
+        client = SupabaseREST(BASE_URL, SERVICE_KEY, transport=make_routed_transport(handler))
+        client.select("carparks")
+
+        assert seen["apikey"] == SERVICE_KEY
+        assert seen["authorization"] == f"Bearer {SERVICE_KEY}"
+
+    def test_explicit_apikey_decouples_from_authorization_bearer_key(
+        self,
+        make_routed_transport: RoutedTransportFactory,
+    ) -> None:
+        bearer_key = "demo-reader-jwt"
+        anon_key = "project-anon-key"
+        seen: dict[str, str] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["apikey"] = request.headers["apikey"]
+            seen["authorization"] = request.headers["authorization"]
+            return httpx.Response(200, json=[])
+
+        client = SupabaseREST(
+            BASE_URL, bearer_key, apikey=anon_key, transport=make_routed_transport(handler)
+        )
+        client.select("carparks")
+
+        assert seen["apikey"] == anon_key
+        assert seen["authorization"] == f"Bearer {bearer_key}"
+        assert seen["apikey"] != seen["authorization"]
+
+
 class TestSelect:
     """Tests for SupabaseREST.select()."""
 

@@ -114,7 +114,7 @@ Vercel — reuses `api/_lib/read_logic.py`/`supabase_rest.py` verbatim (not
 `api/batch_predict.py` or any write path. Proven locally only; Railway
 wiring is an explicit, not-yet-done follow-up.
 
-**Credential decision made, partially applied:** the only Supabase
+**Credential decision made, applied.** The only Supabase
 credential able to read `carpark_forecast`/`carparks`/`carpark_baseline`
 out of the box is the service-role key (RLS is deny-by-default with
 `anon`/`authenticated` grants revoked, per `db/README.md`, `db/schema.sql`).
@@ -122,18 +122,30 @@ That key bypasses RLS and can write anywhere, so it is not safe to hand to
 a second deployment. Captain's decision: a dedicated `demo_reader` Postgres
 role, SELECT-only on those three tables (`db/schema.sql` section 11 for
 `carpark_forecast`/`carparks`, section 11b for `carpark_baseline`, added
-for the destination-search redesign's trend chart). Those migrations are
-written but not yet applied to the live project (manual step), and no JWT
-for that role has been minted yet. `demo/app.py` already reads
-`SUPABASE_URL` / `SUPABASE_DEMO_READER_KEY` directly from the environment
-(not via `_lib.config.load_settings()`, which stays
-required-service-role-key-only for the real `api/forecast.py` path).
-Missing/blank vars, or a permission-denied error because a section hasn't
-been applied yet, all fall through to a typed 503 rather than crashing, so
-the app is deploy-ready before the role/key/grants exist. What's left is
-applying both migrations and minting the JWT. See `demo/README.md`'s
-Credentials section for the step-by-step (JWT minting instructions live as
-a comment in `db/schema.sql` section 11 itself).
+for the destination-search redesign's trend chart), authenticated via a
+hand-signed JWT with a `role: demo_reader` claim.
+
+A hand-signed role JWT is not, by itself, enough to talk to Supabase's
+REST API: Supabase's Kong gateway checks the `apikey` header against its
+own list of project keys *before* the request reaches PostgREST's role
+switching, and a hand-signed JWT is not on that list, so it gets a 401
+`Invalid API key` from Kong even though the JWT's signature and claims are
+correct. The fix is `SupabaseREST`'s optional `apikey` keyword (`api/_lib/
+supabase_rest.py`): when omitted, the `apikey` header defaults to the same
+value as the `Authorization` bearer token (correct for a real Supabase-
+issued key, e.g. the service-role key, which is simultaneously a
+Kong-recognized key and a role-bearing JWT); `demo/app.py` passes the
+project's public anon/publishable key (`SUPABASE_ANON_KEY` env var) as
+`apikey=` on all three of its `SupabaseREST(...)` sites, decoupling it
+from the `demo_reader` JWT used as the bearer token. `demo/app.py` reads
+`SUPABASE_URL` / `SUPABASE_DEMO_READER_KEY` / `SUPABASE_ANON_KEY` directly
+from the environment (not via `_lib.config.load_settings()`, which stays
+required-service-role-key-only for the real `api/forecast.py` path). Any
+of the three missing/blank, or a permission-denied error because a
+migration section hasn't been applied yet, all fall through to a typed 503
+rather than crashing. See `demo/README.md`'s Credentials section for the
+step-by-step (JWT minting instructions live as a comment in `db/schema.sql`
+section 11 itself).
 
 `demo/static/` is a destination-search-led flow (search box, a selected
 carpark's forecast/tier plus nearby alternatives ranked by client-side

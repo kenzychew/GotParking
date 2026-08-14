@@ -30,7 +30,7 @@ routes to `api/batch_predict.py` or any write path.
 ```bash
 cd demo
 uv venv .venv && uv pip install -p .venv -r requirements-demo.txt -r requirements-dev.txt
-cp .env.example .env   # fill in SUPABASE_URL / SUPABASE_DEMO_READER_KEY -- see Credentials below
+cp .env.example .env   # fill in SUPABASE_URL / SUPABASE_DEMO_READER_KEY / SUPABASE_ANON_KEY -- see Credentials below
 set -a && source .env && set +a
 .venv/bin/uvicorn app:app --reload
 ```
@@ -80,12 +80,23 @@ not execute it, and until section 11b is applied,
 `GET /api/carpark-baseline/{carpark_id}` degrades to its typed 503.
 
 `demo/app.py` reads its Supabase credentials directly from
-`SUPABASE_URL`/**`SUPABASE_DEMO_READER_KEY`** (not through
-`_lib.config.load_settings()`, which is shared with the write-capable
-Vercel API and requires the service-role key). If either var is
-missing/blank, `GET /api/forecast` falls straight through to the typed 503
-rather than crashing -- so the app runs fine before the role/key exist,
-just without live data.
+`SUPABASE_URL`/**`SUPABASE_DEMO_READER_KEY`**/**`SUPABASE_ANON_KEY`** (not
+through `_lib.config.load_settings()`, which is shared with the
+write-capable Vercel API and requires the service-role key). If any of the
+three is missing/blank, `GET /api/forecast` falls straight through to the
+typed 503 rather than crashing -- so the app runs fine before the
+role/key/grants exist, just without live data.
+
+`SUPABASE_ANON_KEY` is the project's public anon key (or its newer
+"publishable key" equivalent) -- safe to expose client-side, distinct from
+`SUPABASE_DEMO_READER_KEY`. Supabase's Kong gateway only accepts a
+Supabase-issued key as the `apikey` header; a hand-signed `demo_reader`
+JWT works as the `Authorization: Bearer` token but is rejected by Kong if
+sent as `apikey` too (`Invalid API key`, before the request ever reaches
+PostgREST's role switching). `SUPABASE_ANON_KEY` supplies the `apikey`
+header and `SUPABASE_DEMO_READER_KEY` supplies the bearer token that
+actually scopes which tables the demo can read -- see `SupabaseREST`'s
+`apikey` parameter in `api/_lib/supabase_rest.py`.
 
 After applying section 11, two things need to happen before this demo can
 actually use `demo_reader` for real:

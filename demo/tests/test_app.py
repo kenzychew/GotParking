@@ -55,6 +55,7 @@ def test_forecast_happy_path_returns_pinned_payload(
     )
     monkeypatch.setenv("SUPABASE_URL", "https://x")
     monkeypatch.setenv("SUPABASE_DEMO_READER_KEY", "k")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "a")
     monkeypatch.setattr(demo_app, "SupabaseREST", lambda *a, **k: db)
 
     response = client.get("/api/forecast")
@@ -81,6 +82,27 @@ def test_forecast_missing_env_yields_typed_503_not_a_crash(
 ) -> None:
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_DEMO_READER_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
+
+    response = client.get("/api/forecast")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "predictions_unavailable",
+        "message": "Predictions temporarily unavailable",
+    }
+
+
+def test_forecast_missing_anon_key_only_yields_typed_503_not_a_crash(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SUPABASE_URL and SUPABASE_DEMO_READER_KEY alone are not enough --
+    SUPABASE_ANON_KEY missing/blank must degrade the same way a missing
+    SUPABASE_DEMO_READER_KEY does, not crash or send a malformed request.
+    """
+    monkeypatch.setenv("SUPABASE_URL", "https://x")
+    monkeypatch.setenv("SUPABASE_DEMO_READER_KEY", "k")
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
 
     response = client.get("/api/forecast")
 
@@ -121,6 +143,7 @@ def test_carparks_geo_happy_path_returns_rows(
     )
     monkeypatch.setenv("SUPABASE_URL", "https://x")
     monkeypatch.setenv("SUPABASE_DEMO_READER_KEY", "k")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "a")
     monkeypatch.setattr(demo_app, "SupabaseREST", lambda *a, **k: db)
 
     response = client.get("/api/carparks-geo")
@@ -138,6 +161,7 @@ def test_carparks_geo_missing_env_yields_typed_503_not_a_crash(
 ) -> None:
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_DEMO_READER_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
 
     response = client.get("/api/carparks-geo")
 
@@ -154,6 +178,7 @@ def test_carparks_geo_supabase_failure_yields_typed_503_not_a_crash(
     db = FakeSupabaseDB(fail_tables={"carparks"})
     monkeypatch.setenv("SUPABASE_URL", "https://x")
     monkeypatch.setenv("SUPABASE_DEMO_READER_KEY", "k")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "a")
     monkeypatch.setattr(demo_app, "SupabaseREST", lambda *a, **k: db)
 
     response = client.get("/api/carparks-geo")
@@ -182,6 +207,7 @@ def test_carpark_baseline_happy_path_returns_todays_slots_only(
     )
     monkeypatch.setenv("SUPABASE_URL", "https://x")
     monkeypatch.setenv("SUPABASE_DEMO_READER_KEY", "k")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "a")
     monkeypatch.setattr(demo_app, "SupabaseREST", lambda *a, **k: db)
 
     response = client.get("/api/carpark-baseline/1")
@@ -207,6 +233,7 @@ def test_carpark_baseline_unknown_carpark_returns_empty_slots_not_503(
     db = FakeSupabaseDB(tables={"carpark_baseline": []})
     monkeypatch.setenv("SUPABASE_URL", "https://x")
     monkeypatch.setenv("SUPABASE_DEMO_READER_KEY", "k")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "a")
     monkeypatch.setattr(demo_app, "SupabaseREST", lambda *a, **k: db)
 
     response = client.get("/api/carpark-baseline/does-not-exist")
@@ -220,6 +247,7 @@ def test_carpark_baseline_missing_env_yields_typed_503_not_a_crash(
 ) -> None:
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_DEMO_READER_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
 
     response = client.get("/api/carpark-baseline/1")
 
@@ -241,6 +269,7 @@ def test_carpark_baseline_supabase_failure_yields_typed_503_not_a_crash(
     db = FakeSupabaseDB(fail_tables={"carpark_baseline"})
     monkeypatch.setenv("SUPABASE_URL", "https://x")
     monkeypatch.setenv("SUPABASE_DEMO_READER_KEY", "k")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "a")
     monkeypatch.setattr(demo_app, "SupabaseREST", lambda *a, **k: db)
 
     response = client.get("/api/carpark-baseline/1")
