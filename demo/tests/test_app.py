@@ -22,11 +22,12 @@ for _p in (_API_DIR, _DEMO_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+from _lib.onemap_client import OneMapUnavailableError, PostalSearchResult
+from _lib.sg_time import sgt_parts
 from fastapi.testclient import TestClient
 from tests.fakes import FakeSupabaseDB
 
 import app as demo_app
-from _lib.sg_time import sgt_parts
 
 
 @pytest.fixture
@@ -278,4 +279,108 @@ def test_carpark_baseline_supabase_failure_yields_typed_503_not_a_crash(
     assert response.json() == {
         "error": "baseline_unavailable",
         "message": "Typical availability data temporarily unavailable",
+    }
+
+
+class _FakeTokenCache:
+    """Stands in for `TokenCache` so tests never need a real OneMap token
+    request -- `search_location` is what's mocked/stubbed per-test, this
+    only needs to hand back a fixed token without touching the network."""
+
+    def get(self, email, password, client, now):
+        return "tok-123"
+
+
+def test_geocode_search_happy_path_returns_candidates(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ONEMAP_EMAIL", "a@b.com")
+    monkeypatch.setenv("ONEMAP_PASSWORD", "secret")
+    monkeypatch.setattr(demo_app, "_onemap_token_cache", _FakeTokenCache())
+    monkeypatch.setattr(
+        demo_app,
+        "search_location",
+        lambda token, query, client, limit=5: [
+            PostalSearchResult(building_name="ORCHARD ROAD", latitude=1.3040, longitude=103.8318),
+            PostalSearchResult(building_name="ORCHARD CENTRAL", latitude=1.3010, longitude=103.8390),
+        ],
+    )
+
+    response = client.get("/api/geocode-search", params={"q": "orchard"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "results": [
+            {"building_name": "ORCHARD ROAD", "latitude": 1.3040, "longitude": 103.8318},
+            {"building_name": "ORCHARD CENTRAL", "latitude": 1.3010, "longitude": 103.8390},
+        ]
+    }
+
+
+def test_geocode_search_no_matches_returns_200_with_empty_list(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ONEMAP_EMAIL", "a@b.com")
+    monkeypatch.setenv("ONEMAP_PASSWORD", "secret")
+    monkeypatch.setattr(demo_app, "_onemap_token_cache", _FakeTokenCache())
+    monkeypatch.setattr(demo_app, "search_location", lambda token, query, client, limit=5: [])
+
+    response = client.get("/api/geocode-search", params={"q": "zzzznotarealplace"})
+
+    assert response.status_code == 200
+    assert response.json() == {"results": []}
+
+
+def test_geocode_search_missing_q_returns_400(client: TestClient) -> None:
+    response = client.get("/api/geocode-search")
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "bad_request"
+
+
+def test_geocode_search_blank_q_returns_400(client: TestClient) -> None:
+    response = client.get("/api/geocode-search", params={"q": "   "})
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "bad_request"
+
+
+def test_geocode_search_missing_credentials_returns_503_without_calling_onemap(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ONEMAP_EMAIL", raising=False)
+    monkeypatch.delenv("ONEMAP_PASSWORD", raising=False)
+
+    def _unexpected(*args, **kwargs):
+        raise AssertionError("should never reach OneMap without configured credentials")
+
+    monkeypatch.setattr(demo_app, "search_location", _unexpected)
+
+    response = client.get("/api/geocode-search", params={"q": "orchard"})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "geocode_search_unavailable",
+        "message": "Destination search temporarily unavailable",
+    }
+
+
+def test_geocode_search_onemap_failure_returns_503_not_a_crash(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ONEMAP_EMAIL", "a@b.com")
+    monkeypatch.setenv("ONEMAP_PASSWORD", "secret")
+    monkeypatch.setattr(demo_app, "_onemap_token_cache", _FakeTokenCache())
+
+    def _raise(*args, **kwargs):
+        raise OneMapUnavailableError("search(...) failed")
+
+    monkeypatch.setattr(demo_app, "search_location", _raise)
+
+    response = client.get("/api/geocode-search", params={"q": "orchard"})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "geocode_search_unavailable",
+        "message": "Destination search temporarily unavailable",
     }

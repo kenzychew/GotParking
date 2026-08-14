@@ -85,6 +85,40 @@ def fetch_token(email: str, password: str, client: httpx.Client) -> tuple[str, d
     return token, datetime.fromtimestamp(int(expiry_raw), tz=timezone.utc)
 
 
+def _parse_search_result(item: dict) -> PostalSearchResult:
+    """Parse one OneMap `results[]` entry into a PostalSearchResult.
+
+    Shared by `search_postal_code` and `search_location` -- both call the same
+    SEARCH_URL endpoint and get the same per-result shape back. `building_name` is
+    cleaned to an empty string if OneMap returns the literal "NIL" (its own convention
+    for "no value", found live 2026-07-10 in scripts/onemap_client.py's
+    reverse_geocode).
+    """
+    building_name = str(item.get("BUILDING", "")).strip()
+    if building_name.upper() == "NIL":
+        building_name = ""
+    return PostalSearchResult(
+        building_name=building_name,
+        latitude=float(item["LATITUDE"]),
+        longitude=float(item["LONGITUDE"]),
+    )
+
+
+def _run_search(token: str, query: str, client: httpx.Client) -> list[dict]:
+    """Call OneMap's elastic search endpoint and return its raw `results` list."""
+    try:
+        response = client.get(
+            SEARCH_URL,
+            params={"searchVal": query, "returnGeom": "Y", "getAddrDetails": "Y", "pageNum": "1"},
+            headers={"Authorization": token},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPError as exc:
+        raise OneMapUnavailableError(f"search({query!r}) failed: {exc!r}") from exc
+    return payload.get("results") or []
+
+
 def search_postal_code(token: str, postal_code: str, client: httpx.Client) -> PostalSearchResult | None:
     """Resolve a postal code to a building/coordinate via OneMap's search API.
 
@@ -105,29 +139,38 @@ def search_postal_code(token: str, postal_code: str, client: httpx.Client) -> Po
     Raises:
         OneMapUnavailableError: If the request fails.
     """
-    try:
-        response = client.get(
-            SEARCH_URL,
-            params={"searchVal": postal_code, "returnGeom": "Y", "getAddrDetails": "Y", "pageNum": "1"},
-            headers={"Authorization": token},
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except httpx.HTTPError as exc:
-        raise OneMapUnavailableError(f"search_postal_code({postal_code!r}) failed: {exc!r}") from exc
-
-    results = payload.get("results") or []
+    results = _run_search(token, postal_code, client)
     if not results:
         return None
-    best = results[0]
-    building_name = str(best.get("BUILDING", "")).strip()
-    if building_name.upper() == "NIL":
-        building_name = ""
-    return PostalSearchResult(
-        building_name=building_name,
-        latitude=float(best["LATITUDE"]),
-        longitude=float(best["LONGITUDE"]),
-    )
+    return _parse_search_result(results[0])
+
+
+def search_location(
+    token: str, query: str, client: httpx.Client, limit: int = 5
+) -> list[PostalSearchResult]:
+    """Resolve a free-text place name to multiple candidate matches via OneMap's search API.
+
+    `search_postal_code` only ever returns `results[0]` -- a deliberate choice for
+    postal codes, which are unambiguous. A free-text destination query like "orchard"
+    is not: OneMap's same search endpoint returns several buildings/streets matching
+    that text, so this returns up to `limit` of them instead of collapsing to one.
+
+    Args:
+        token: A valid bearer token.
+        query: The free-text search query.
+        client: An httpx.Client (injected so tests can supply a MockTransport).
+        limit: Maximum number of candidates to return.
+
+    Returns:
+        Up to `limit` matches, best-ranked first (OneMap's own result order). Empty
+        list if nothing was found -- a real, expected outcome for a query with no
+        matches, not an error.
+
+    Raises:
+        OneMapUnavailableError: If the request fails.
+    """
+    results = _run_search(token, query, client)
+    return [_parse_search_result(item) for item in results[:limit]]
 
 
 class TokenCache:

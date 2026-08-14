@@ -11,12 +11,19 @@ const searchResultsEl = document.getElementById("search-results");
 const emptyStateEl = document.getElementById("empty-state");
 const resultSectionEl = document.getElementById("result-section");
 
+const primaryResultPanelEl = document.getElementById("primary-result-panel");
 const primaryNameEl = document.getElementById("primary-name");
 const primaryTierEl = document.getElementById("primary-tier");
 const primaryLotsEl = document.getElementById("primary-lots");
 const primaryStateEl = document.getElementById("primary-state");
+const detailPanelEl = document.getElementById("detail-panel");
 const chartContainerEl = document.getElementById("chart-container");
+const resultSideEl = document.getElementById("result-side");
 const alternativesListEl = document.getElementById("alternatives-list");
+
+const destinationPanelEl = document.getElementById("destination-panel");
+const destinationNameEl = document.getElementById("destination-name");
+const destinationListEl = document.getElementById("destination-list");
 
 const mapToggleEl = document.getElementById("map-toggle");
 const mapPanelEl = document.getElementById("map-panel");
@@ -28,6 +35,10 @@ const DEFAULT_ZOOM = 12;
 const EARTH_RADIUS_METERS = 6_371_000;
 const MAX_SEARCH_RESULTS = 8;
 const MAX_ALTERNATIVES = 5;
+const MAX_DESTINATION_CARPARKS = 10;
+const MAX_DESTINATION_SUGGESTIONS = 5;
+const GEOCODE_SEARCH_MIN_CHARS = 3;
+const GEOCODE_SEARCH_DEBOUNCE_MS = 350;
 
 const TIER_LABEL = {
   plenty: "Plenty",
@@ -141,54 +152,128 @@ function searchCarparks(query) {
   return scored.slice(0, MAX_SEARCH_RESULTS).map((s) => s.carpark);
 }
 
-function renderSearchResults(matches) {
-  if (matches.length === 0) {
+let latestCarparkMatches = [];
+let latestDestinationMatches = [];
+let geocodeDebounceTimer = null;
+
+function renderSearchResults(carparkMatches, destinationMatches) {
+  if (carparkMatches.length === 0 && destinationMatches.length === 0) {
     searchResultsEl.hidden = true;
     searchResultsEl.innerHTML = "";
     return;
   }
-  searchResultsEl.innerHTML = matches
-    .map(
-      (carpark, i) => `
-        <li class="search-result-item" data-carpark-id="${escapeHtml(carpark.id)}" data-index="${i}">
-          <span class="search-result-name">${escapeHtml(carpark.name)}</span>
-          <span class="tier ${tierClass(carpark.tier)}">${escapeHtml(tierLabel(carpark.tier))}</span>
-        </li>
-      `
-    )
-    .join("");
+
+  let html = "";
+  if (carparkMatches.length > 0) {
+    html += '<li class="search-result-group">Carparks</li>';
+    html += carparkMatches
+      .map(
+        (carpark) => `
+          <li class="search-result-item" data-kind="carpark" data-carpark-id="${escapeHtml(carpark.id)}">
+            <span class="search-result-name">${escapeHtml(carpark.name)}</span>
+            <span class="tier ${tierClass(carpark.tier)}">${escapeHtml(tierLabel(carpark.tier))}</span>
+          </li>
+        `
+      )
+      .join("");
+  }
+  if (destinationMatches.length > 0) {
+    html += '<li class="search-result-group">Locations</li>';
+    html += destinationMatches
+      .map(
+        (dest, i) => `
+          <li class="search-result-item" data-kind="destination" data-index="${i}">
+            <span class="search-result-name">${escapeHtml(dest.building_name || "Unnamed location")}</span>
+          </li>
+        `
+      )
+      .join("");
+  }
+  searchResultsEl.innerHTML = html;
   searchResultsEl.hidden = false;
 
-  for (const li of searchResultsEl.querySelectorAll(".search-result-item")) {
+  for (const li of searchResultsEl.querySelectorAll('.search-result-item[data-kind="carpark"]')) {
     li.addEventListener("click", () => {
       selectCarpark(li.dataset.carparkId);
       searchInputEl.value = carparksById[li.dataset.carparkId]?.name ?? "";
-      renderSearchResults([]);
+      clearSearchResults();
+    });
+  }
+  for (const li of searchResultsEl.querySelectorAll('.search-result-item[data-kind="destination"]')) {
+    li.addEventListener("click", () => {
+      const dest = destinationMatches[Number(li.dataset.index)];
+      if (dest) {
+        selectDestination(dest);
+        searchInputEl.value = dest.building_name || searchInputEl.value;
+      }
+      clearSearchResults();
     });
   }
 }
 
+function clearSearchResults() {
+  clearTimeout(geocodeDebounceTimer);
+  latestCarparkMatches = [];
+  latestDestinationMatches = [];
+  renderSearchResults([], []);
+}
+
+async function fetchDestinationSuggestions(trimmedQuery, rawQueryAtRequestTime) {
+  const result = await fetchJson(`/api/geocode-search?q=${encodeURIComponent(trimmedQuery)}`);
+  // The input may have changed (or the dropdown been dismissed) while this request was
+  // in flight -- a stale response must never clobber what's currently on screen.
+  if (searchInputEl.value !== rawQueryAtRequestTime) {
+    return;
+  }
+  if (!result.ok || !result.data || !Array.isArray(result.data.results)) {
+    // OneMap being unconfigured/unreachable must never break carpark-name search --
+    // destination suggestions just silently don't appear.
+    return;
+  }
+  latestDestinationMatches = result.data.results.slice(0, MAX_DESTINATION_SUGGESTIONS);
+  renderSearchResults(latestCarparkMatches, latestDestinationMatches);
+}
+
 searchInputEl.addEventListener("input", () => {
-  const matches = searchCarparks(searchInputEl.value);
-  renderSearchResults(matches);
+  const query = searchInputEl.value;
+  latestCarparkMatches = searchCarparks(query);
+  latestDestinationMatches = [];
+  renderSearchResults(latestCarparkMatches, latestDestinationMatches);
+
+  clearTimeout(geocodeDebounceTimer);
+  const trimmed = query.trim();
+  if (trimmed.length < GEOCODE_SEARCH_MIN_CHARS) {
+    return;
+  }
+  geocodeDebounceTimer = setTimeout(() => {
+    fetchDestinationSuggestions(trimmed, query);
+  }, GEOCODE_SEARCH_DEBOUNCE_MS);
 });
 
 searchInputEl.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     const first = searchResultsEl.querySelector(".search-result-item");
     if (first) {
-      selectCarpark(first.dataset.carparkId);
-      searchInputEl.value = carparksById[first.dataset.carparkId]?.name ?? "";
-      renderSearchResults([]);
+      if (first.dataset.kind === "destination") {
+        const dest = latestDestinationMatches[Number(first.dataset.index)];
+        if (dest) {
+          selectDestination(dest);
+          searchInputEl.value = dest.building_name || searchInputEl.value;
+        }
+      } else {
+        selectCarpark(first.dataset.carparkId);
+        searchInputEl.value = carparksById[first.dataset.carparkId]?.name ?? "";
+      }
+      clearSearchResults();
     }
   } else if (event.key === "Escape") {
-    renderSearchResults([]);
+    clearSearchResults();
   }
 });
 
 document.addEventListener("click", (event) => {
   if (!event.target.closest(".search-box")) {
-    renderSearchResults([]);
+    clearSearchResults();
   }
 });
 
@@ -389,6 +474,11 @@ function selectCarpark(carparkId) {
   selectedId = carparkId;
   emptyStateEl.hidden = true;
   resultSectionEl.hidden = false;
+  resultSectionEl.classList.remove("destination-mode");
+  primaryResultPanelEl.hidden = false;
+  detailPanelEl.hidden = false;
+  destinationPanelEl.hidden = true;
+  resultSideEl.hidden = false;
 
   renderPrimaryResult(carpark);
   renderAlternatives(carpark);
@@ -397,6 +487,65 @@ function selectCarpark(carparkId) {
   if (mapInitialized && typeof carpark.lat === "number" && typeof carpark.lng === "number") {
     map.panTo([carpark.lat, carpark.lng]);
     markersByCarparkId[carpark.id]?.openPopup();
+  }
+}
+
+/**
+ * Select a raw destination (from `/api/geocode-search`, not a known carpark): there is
+ * no forecast/tier/chart for an arbitrary point, so this renders every carpark ranked
+ * by real haversine distance from the destination's coordinate instead of a single
+ * carpark's detail -- the destination-search equivalent of `renderAlternatives`, but
+ * rooted at `dest` rather than a selected carpark's own location.
+ */
+function selectDestination(dest) {
+  selectedId = null;
+  emptyStateEl.hidden = true;
+  resultSectionEl.hidden = false;
+  resultSectionEl.classList.add("destination-mode");
+  primaryResultPanelEl.hidden = true;
+  detailPanelEl.hidden = true;
+  destinationPanelEl.hidden = false;
+  resultSideEl.hidden = true;
+
+  destinationNameEl.textContent = dest.building_name
+    ? `Nearest carparks to ${dest.building_name}`
+    : "Nearest carparks to this location";
+
+  const ranked = carparks
+    .filter((c) => typeof c.lat === "number" && typeof c.lng === "number")
+    .map((c) => ({
+      carpark: c,
+      distanceMeters: haversineDistanceMeters(dest.latitude, dest.longitude, c.lat, c.lng),
+    }))
+    .sort((a, b) => a.distanceMeters - b.distanceMeters)
+    .slice(0, MAX_DESTINATION_CARPARKS);
+
+  if (ranked.length === 0) {
+    destinationListEl.innerHTML = '<li class="alternatives-empty">No carparks with a known location yet.</li>';
+    return;
+  }
+
+  destinationListEl.innerHTML = ranked
+    .map(
+      ({ carpark: c, distanceMeters }) => `
+        <li class="alternative-item" data-carpark-id="${escapeHtml(c.id)}">
+          <div class="alternative-head">
+            <span class="name">${escapeHtml(c.name)}</span>
+            <span class="tier ${tierClass(c.tier)}">${escapeHtml(tierLabel(c.tier))}</span>
+          </div>
+          <div class="alternative-meta">
+            ${escapeHtml(formatDistance(distanceMeters))} away · forecast ${c.forecast_lots ?? "?"} lots
+          </div>
+        </li>
+      `
+    )
+    .join("");
+
+  for (const li of destinationListEl.querySelectorAll(".alternative-item")) {
+    li.addEventListener("click", () => {
+      selectCarpark(li.dataset.carparkId);
+      searchInputEl.value = carparksById[li.dataset.carparkId]?.name ?? "";
+    });
   }
 }
 
