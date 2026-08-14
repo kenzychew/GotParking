@@ -115,33 +115,45 @@ Vercel — reuses `api/_lib/read_logic.py`/`supabase_rest.py` verbatim (not
 wiring is an explicit, not-yet-done follow-up.
 
 **Credential decision made, partially applied:** the only Supabase
-credential able to read `carpark_forecast`/`carparks` out of the box is the
-service-role key — RLS is deny-by-default with `anon`/`authenticated`
-grants revoked (`db/README.md`, `db/schema.sql`). That key bypasses RLS and
-can write anywhere, so it is not safe to hand to a second deployment.
-Captain's decision: a dedicated `demo_reader` Postgres role, SELECT-only on
-those two tables (`db/schema.sql` section 11) — that migration is written
-but not yet applied to the live project (manual step), and no JWT for that
-role has been minted yet. `demo/app.py` already reads `SUPABASE_URL` /
-`SUPABASE_DEMO_READER_KEY` directly from the environment (not via
-`_lib.config.load_settings()`, which stays required-service-role-key-only
-for the real `api/forecast.py` path) — missing/blank vars fall through to
-the typed 503 rather than crashing, so the app is deploy-ready before the
-role/key exist. What's left is applying the migration and minting the JWT.
-See `demo/README.md`'s Credentials section for the step-by-step (JWT
-minting instructions live as a comment in `db/schema.sql` section 11
-itself).
+credential able to read `carpark_forecast`/`carparks`/`carpark_baseline`
+out of the box is the service-role key (RLS is deny-by-default with
+`anon`/`authenticated` grants revoked, per `db/README.md`, `db/schema.sql`).
+That key bypasses RLS and can write anywhere, so it is not safe to hand to
+a second deployment. Captain's decision: a dedicated `demo_reader` Postgres
+role, SELECT-only on those three tables (`db/schema.sql` section 11 for
+`carpark_forecast`/`carparks`, section 11b for `carpark_baseline`, added
+for the destination-search redesign's trend chart). Those migrations are
+written but not yet applied to the live project (manual step), and no JWT
+for that role has been minted yet. `demo/app.py` already reads
+`SUPABASE_URL` / `SUPABASE_DEMO_READER_KEY` directly from the environment
+(not via `_lib.config.load_settings()`, which stays
+required-service-role-key-only for the real `api/forecast.py` path).
+Missing/blank vars, or a permission-denied error because a section hasn't
+been applied yet, all fall through to a typed 503 rather than crashing, so
+the app is deploy-ready before the role/key/grants exist. What's left is
+applying both migrations and minting the JWT. See `demo/README.md`'s
+Credentials section for the step-by-step (JWT minting instructions live as
+a comment in `db/schema.sql` section 11 itself).
 
-`demo/static/` is a Leaflet (CDN, no build step) map plus list view, styled
-to match `portfolio-hub`'s design tokens (`app/globals.css`: Fraunces /
-Public Sans / JetBrains Mono, warm off-white/near-black palette) — that
-project lives at a sibling checkout, not inside this repo. The map is
-backed by a demo-only `GET /api/carparks-geo` in `demo/app.py` (id/name/
-lat/lng from `public.carparks`, same `demo_reader` credentials and typed
-503-never-500 contract as `/api/forecast`); it is not part of the pinned
-`/api/forecast` contract and never touches `api/_lib/read_logic.py`. Tier
-marker colors are the same hex values as `frontend/src/lib/colorTokens.ts`'s
-light theme — keep them in sync if that file's values ever change.
+`demo/static/` is a destination-search-led flow (search box, a selected
+carpark's forecast/tier plus nearby alternatives ranked by client-side
+haversine distance, and a trend chart from `GET
+/api/carpark-baseline/{carpark_id}`), not a map-first browse view: vanilla
+JS/CDN, no build step, styled to match `portfolio-hub`'s design tokens
+(`app/globals.css`: Fraunces / Public Sans / JetBrains Mono, warm
+off-white/near-black palette; that project lives at a sibling checkout,
+not inside this repo). The original Leaflet map still exists behind a "Show
+map" toggle, not the default view. Nearby-alternatives distance sorting and
+the map both use a demo-only `GET /api/carparks-geo` in `demo/app.py`
+(id/name/lat/lng from `public.carparks`); the trend chart uses the
+demo-only `GET /api/carpark-baseline/{carpark_id}` (today's SGT
+day-of-week curve from `public.carpark_baseline`, current slot computed via
+`api/_lib/sg_time.py`'s `sgt_parts`). Both are the same `demo_reader`
+credentials and typed 503-never-500 contract as `/api/forecast`, and
+neither is part of the pinned `/api/forecast` contract or touches
+`api/_lib/read_logic.py`. Tier marker/pill colors are the same hex values
+as `frontend/src/lib/colorTokens.ts`'s light theme, keep them in sync if
+that file's values ever change.
 
 ## Maintaining this file
 

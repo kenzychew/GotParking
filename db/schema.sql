@@ -773,3 +773,28 @@ create policy demo_reader_select
     on public.carparks for select
     to demo_reader
     using (true);
+
+-- ----------------------------------------------------------------------------
+-- 11b) demo_reader -- extend to carpark_baseline (destination-search redesign)
+-- ----------------------------------------------------------------------------
+-- The demo's new GET /api/carpark-baseline/{carpark_id} endpoint (demo/app.py)
+-- plots each carpark's typical-availability-by-time-of-day curve. That reads
+-- `carpark_baseline` -- a small, precomputed, serving-safe table (see section
+-- 3), NOT the raw, unbounded `carpark_history` table -- so this grant stays
+-- exactly as narrow as the rest of demo_reader's access. Same pattern as the
+-- forecast/carparks grants above: SELECT-only, drop-then-create RLS policy.
+--
+-- MANUAL STEP, same as the rest of section 11: this block only defines the
+-- grant and policy in source -- it does not apply itself. Whoever owns the
+-- live Supabase project must paste this file (or at minimum this block) into
+-- the SQL Editor and run it before GET /api/carpark-baseline/{carpark_id}
+-- can return real data; until then the endpoint's Supabase call fails with a
+-- permission-denied error, which demo/app.py already degrades gracefully
+-- into the same typed 503 "unavailable" response used elsewhere.
+grant select on public.carpark_baseline to demo_reader;
+
+drop policy if exists demo_reader_select on public.carpark_baseline;
+create policy demo_reader_select
+    on public.carpark_baseline for select
+    to demo_reader
+    using (true);

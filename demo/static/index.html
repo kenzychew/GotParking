@@ -6,7 +6,7 @@
 <title>GotParking | SG Carpark Forecasting</title>
 <meta
   name="description"
-  content="Read-only demo of GotParking's carpark availability forecast, plotted on a map."
+  content="Read-only demo of GotParking's carpark availability forecast. Search for a destination to see its forecast, typical-availability trend, and nearby alternatives."
 />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -28,21 +28,65 @@
     <h1>GotParking</h1>
     <p class="subtitle">
       A read-only demo of the same public forecast data served at
-      <a href="https://gotparking.vercel.app" target="_blank" rel="noopener">gotparking.vercel.app</a>,
-      plotted on a map. Same read logic, a different web framework (FastAPI on Railway) gluing it in.
+      <a href="https://gotparking.vercel.app" target="_blank" rel="noopener">gotparking.vercel.app</a>.
+      Search for where you're headed to see its forecast, typical-availability trend, and nearby alternatives.
     </p>
   </div>
 </header>
 <main class="layout">
-  <section class="map-panel">
-    <div id="map" class="map"></div>
-    <p id="map-status" class="map-status"></p>
+  <p id="status" class="status">Loading carparks...</p>
+
+  <section class="search-section">
+    <label for="search-input" class="search-label">Where are you headed?</label>
+    <div class="search-box">
+      <input
+        id="search-input"
+        type="text"
+        autocomplete="off"
+        placeholder="Type a mall or carpark name..."
+        aria-autocomplete="list"
+        aria-controls="search-results"
+        disabled
+      />
+      <ul id="search-results" class="search-results" hidden></ul>
+    </div>
+    <p id="empty-state" class="empty-state">
+      Search above to see a carpark's forecast, typical-availability trend, and nearby alternatives.
+    </p>
   </section>
-  <aside class="list-panel">
-    <p id="status">Loading forecast…</p>
-    <p id="generated-at" class="generated-at"></p>
-    <ul id="carparks" class="carparks"></ul>
-  </aside>
+
+  <section id="result-section" class="result-columns" hidden>
+    <div class="result-main">
+      <article class="primary-result">
+        <div class="primary-result-head">
+          <h2 id="primary-name"></h2>
+          <span id="primary-tier" class="tier"></span>
+        </div>
+        <p id="primary-lots" class="lots"></p>
+        <p id="primary-state" class="state"></p>
+      </article>
+
+      <article class="detail-panel">
+        <h3>Typical availability today</h3>
+        <div id="chart-container" class="chart-container"></div>
+      </article>
+    </div>
+
+    <aside class="result-side">
+      <h3>Nearby alternatives</h3>
+      <ul id="alternatives-list" class="alternatives-list"></ul>
+    </aside>
+  </section>
+
+  <p id="generated-at" class="generated-at"></p>
+
+  <section class="map-toggle-section">
+    <button id="map-toggle" type="button" class="map-toggle" aria-expanded="false">Show map</button>
+    <div id="map-panel" class="map-panel" hidden>
+      <div id="map" class="map"></div>
+      <p id="map-status" class="map-status"></p>
+    </div>
+  </section>
 </main>
 <footer class="site-footer">
   <p id="attribution" class="attribution"></p>
