@@ -225,7 +225,7 @@ def run(deps: TrainDeps) -> RunResult:
     candidate_version = make_version(now)
 
     all_carparks = load_active_carparks(deps.db)
-    history = load_carpark_history(deps.db)
+    history = load_carpark_history(deps.db, now)
     eligible_carparks = filter_eligible_carparks(all_carparks, history, now, first_promotion_at)
 
     if not eligible_carparks:

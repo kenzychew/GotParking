@@ -137,6 +137,9 @@ class SupabaseClient(Protocol):
         *,
         params: dict[str, Any] | None = None,
         page_size: int = POSTGREST_PAGE_SIZE,
+        keyset_columns: tuple[str, str] | None = None,
+        keyset_cursor: tuple[Any, Any] | None = None,
+        on_page: Callable[[list[dict[str, Any]]], None] | None = None,
     ) -> list[dict[str, Any]]:
         """See :meth:`SupabaseREST.select_all`."""
         ...
@@ -293,6 +296,9 @@ class SupabaseREST:
         page_size: int = POSTGREST_PAGE_SIZE,
         page_max_attempts: int = POSTGREST_PAGE_MAX_ATTEMPTS,
         sleep: Callable[[float], None] = time.sleep,
+        keyset_columns: tuple[str, str] | None = None,
+        keyset_cursor: tuple[Any, Any] | None = None,
+        on_page: Callable[[list[dict[str, Any]]], None] | None = None,
     ) -> list[dict[str, Any]]:
         """Select every row matching ``params``, paginating as needed.
 
@@ -308,23 +314,77 @@ class SupabaseREST:
         is far more likely to occur at least once than it is for any
         single one-shot Supabase call elsewhere in this codebase.
 
+        Two pagination strategies:
+
+        - Default (`keyset_columns` omitted): plain LIMIT/OFFSET paging --
+          unchanged from before this table pair existed. Fine for the
+          small tables (`carparks`, `carpark_baseline`, etc.) every other
+          caller pages through, where offset depth never gets large
+          enough for Postgres's O(depth) OFFSET cost to matter.
+        - Keyset (`keyset_columns` set): seek pagination ordered ascending
+          on `(col1, col2)`, using PostgREST's `or`/`and` filter
+          composition to fetch strictly-after the last row's
+          `(col1, col2)` value each page. Used for `carpark_history`
+          specifically (see `data_loading.load_carpark_history`) --
+          OFFSET cost is proportional to depth, so walking a
+          multi-million-row table page by page with OFFSET costs roughly
+          O(n^2) in scanned rows; keyset seeking on an indexed column pair
+          keeps each page's cost roughly constant regardless of depth
+          (captain-verified against production via EXPLAIN ANALYZE: the
+          same page at offset 2,387,000 took 10,220ms with OFFSET vs
+          3.3ms with keyset, using the existing single-column
+          `carpark_history_polled_at_idx` index -- no new index needed).
+
         Args:
             table: Table name.
             params: PostgREST query params (filters, select, order). Any
-                `limit`/`offset` keys are overwritten by the pagination
-                loop.
+                `limit`/`offset` keys are overwritten by the offset loop;
+                `order` is overwritten by the keyset loop when
+                `keyset_columns` is set.
             page_size: Rows requested per page.
             page_max_attempts: Max attempts per page fetch before giving up
                 and letting `SupabaseUnavailableError` propagate.
             sleep: Backoff sleep function, injected so tests don't wait on
                 real time; defaults to `time.sleep`.
+            keyset_columns: `(col1, col2)` to seek-paginate on instead of
+                LIMIT/OFFSET, ordered ascending on both. `col1` need not be
+                unique as long as `col2` disambiguates ties (e.g.
+                `carpark_history`'s `(polled_at, carpark_id)`, since
+                multiple carparks can land on the same or very close
+                `polled_at`). None keeps the default offset behavior.
+            keyset_cursor: `(col1_value, col2_value)` of the last row
+                already processed, to resume a keyset walk mid-table (e.g.
+                after a previous attempt crashed) instead of starting from
+                the beginning. Only meaningful when `keyset_columns` is
+                set; values are fed back verbatim as filter comparison
+                values, so pass them exactly as a prior row returned them
+                (no reformatting).
+            on_page: Optional callback invoked with each page's rows right
+                after that page is fetched, before the next page starts.
+                Callers use this to persist a resume cursor incrementally
+                (e.g. `data_loading.load_carpark_history`), so a crash
+                between pages loses at most one page of progress, not the
+                whole walk.
 
         Returns:
-            The concatenation of every page's rows.
+            The concatenation of every page's rows (for a resumed keyset
+            walk, only the rows fetched THIS call -- i.e. from
+            `keyset_cursor` onward, not the whole table).
         """
+        base_params = dict(params or {})
+        if keyset_columns is not None:
+            return self._select_all_keyset(
+                table,
+                base_params=base_params,
+                page_size=page_size,
+                page_max_attempts=page_max_attempts,
+                sleep=sleep,
+                columns=keyset_columns,
+                cursor=keyset_cursor,
+                on_page=on_page,
+            )
         all_rows: list[dict[str, Any]] = []
         offset = 0
-        base_params = dict(params or {})
         while True:
             page_params = dict(base_params)
             page_params["limit"] = page_size
@@ -333,9 +393,70 @@ class SupabaseREST:
                 table, page_params, max_attempts=page_max_attempts, sleep=sleep
             )
             all_rows.extend(result.rows)
+            if on_page is not None and result.rows:
+                on_page(result.rows)
             if len(result.rows) < page_size:
                 break
             offset += page_size
+        return all_rows
+
+    def _select_all_keyset(
+        self,
+        table: str,
+        *,
+        base_params: dict[str, Any],
+        page_size: int,
+        page_max_attempts: int,
+        sleep: Callable[[float], None],
+        columns: tuple[str, str],
+        cursor: tuple[Any, Any] | None,
+        on_page: Callable[[list[dict[str, Any]]], None] | None,
+    ) -> list[dict[str, Any]]:
+        """Seek-paginate ``table`` ordered ascending on ``columns``.
+
+        Each page's filter is `col1.gt.<v1> OR (col1.eq.<v1> AND
+        col2.gt.<v2>)` -- the standard keyset/seek pattern for a
+        two-column sort key where the first column alone is not unique.
+        `col1.gt.<v1>` alone would skip rows for which `col1` repeats
+        across a page boundary; the `and` branch picks those back up via
+        `col2` (the tiebreaker) without re-fetching anything already
+        returned.
+
+        Args:
+            table: Table name.
+            base_params: Params shared by every page (filters, select);
+                `order` is set/overwritten here, `limit`/`or` per page.
+            page_size: Rows requested per page.
+            page_max_attempts: Max attempts per page fetch.
+            sleep: Backoff sleep function.
+            columns: `(col1, col2)` sort/seek key, ascending.
+            cursor: Starting `(col1_value, col2_value)` to seek strictly
+                after, or None to start from the beginning.
+            on_page: See `select_all`'s `on_page` doc.
+
+        Returns:
+            The concatenation of every page's rows fetched THIS call.
+        """
+        col1, col2 = columns
+        base_params["order"] = f"{col1}.asc,{col2}.asc"
+        all_rows: list[dict[str, Any]] = []
+        while True:
+            page_params = dict(base_params)
+            page_params["limit"] = page_size
+            if cursor is not None:
+                v1, v2 = cursor
+                page_params["or"] = f"({col1}.gt.{v1},and({col1}.eq.{v1},{col2}.gt.{v2}))"
+            result = self._select_page_with_backoff(
+                table, page_params, max_attempts=page_max_attempts, sleep=sleep
+            )
+            rows = result.rows
+            all_rows.extend(rows)
+            if rows and on_page is not None:
+                on_page(rows)
+            if len(rows) < page_size:
+                break
+            last = rows[-1]
+            cursor = (last[col1], last[col2])
         return all_rows
 
     def _select_page_with_backoff(

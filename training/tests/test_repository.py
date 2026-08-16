@@ -6,11 +6,14 @@ from datetime import datetime, timezone
 
 from gotparking_training.repository import (
     CarparkInfo,
+    clear_carpark_history_walk_cursor,
     insert_training_run,
     load_active_carparks,
     load_active_model_version,
+    load_carpark_history_walk_cursor,
     load_first_promotion_at,
     promote_model_config,
+    save_carpark_history_walk_cursor,
 )
 from tests.fakes import FakeSupabaseDB
 
@@ -118,6 +121,63 @@ class TestPromoteModelConfig:
 
         _, _, patch = db.updated[0]
         assert patch["first_promotion_at"] == _NOW.isoformat()
+
+
+class TestLoadCarparkHistoryWalkCursor:
+    def test_returns_none_when_both_columns_null(self) -> None:
+        db = FakeSupabaseDB(
+            tables={
+                "carpark_history_walk_cursor": [
+                    {"singleton": True, "polled_at": None, "carpark_id": None}
+                ]
+            }
+        )
+        assert load_carpark_history_walk_cursor(db) is None
+
+    def test_returns_none_when_row_missing(self) -> None:
+        db = FakeSupabaseDB(tables={"carpark_history_walk_cursor": []})
+        assert load_carpark_history_walk_cursor(db) is None
+
+    def test_returns_raw_cursor_values_when_set(self) -> None:
+        db = FakeSupabaseDB(
+            tables={
+                "carpark_history_walk_cursor": [
+                    {"singleton": True, "polled_at": "2026-07-05T12:00:00+00:00",
+                     "carpark_id": "7"}
+                ]
+            }
+        )
+        assert load_carpark_history_walk_cursor(db) == ("2026-07-05T12:00:00+00:00", "7")
+
+
+class TestSaveCarparkHistoryWalkCursor:
+    def test_patches_singleton_row_with_cursor_and_timestamp(self) -> None:
+        db = FakeSupabaseDB()
+
+        save_carpark_history_walk_cursor(db, "2026-07-05T12:00:00+00:00", "7", _NOW)
+
+        assert len(db.updated) == 1
+        table, params, patch = db.updated[0]
+        assert table == "carpark_history_walk_cursor"
+        assert params == {"singleton": "eq.true"}
+        assert patch == {
+            "polled_at": "2026-07-05T12:00:00+00:00",
+            "carpark_id": "7",
+            "updated_at": _NOW.isoformat(),
+        }
+
+
+class TestClearCarparkHistoryWalkCursor:
+    def test_patches_singleton_row_with_null_cursor(self) -> None:
+        db = FakeSupabaseDB()
+
+        clear_carpark_history_walk_cursor(db, _NOW)
+
+        assert len(db.updated) == 1
+        table, params, patch = db.updated[0]
+        assert table == "carpark_history_walk_cursor"
+        assert params == {"singleton": "eq.true"}
+        assert patch == {"polled_at": None, "carpark_id": None, "updated_at": _NOW.isoformat()}
 
 
 class TestInsertTrainingRun:

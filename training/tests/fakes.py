@@ -110,11 +110,23 @@ class FakeSupabaseDB:
         *,
         params: dict[str, Any] | None = None,
         page_size: int = 1000,
+        keyset_columns: tuple[str, str] | None = None,
+        keyset_cursor: tuple[Any, Any] | None = None,
+        on_page: Any = None,
     ) -> list[dict[str, Any]]:
         if table in self.fail_tables:
             raise SupabaseUnavailableError(f"select_all {table}")
         self.select_calls.append((table, dict(params or {})))
-        return self._resolve_rows(table, params or {})
+        rows = self._resolve_rows(table, params or {})
+        if keyset_columns is not None:
+            col1, col2 = keyset_columns
+            rows = sorted(rows, key=lambda r: (str(r[col1]), str(r[col2])))
+            if keyset_cursor is not None:
+                v1, v2 = keyset_cursor
+                rows = [r for r in rows if (str(r[col1]), str(r[col2])) > (str(v1), str(v2))]
+        if on_page is not None and rows:
+            on_page(rows)
+        return rows
 
     def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
         if table in self.fail_tables:

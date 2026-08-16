@@ -169,6 +169,157 @@ class TestSelectAll:
             )
 
 
+class TestSelectAllKeyset:
+    """Tests for SupabaseREST.select_all's keyset (seek) pagination path,
+    used for `carpark_history` (see `data_loading.load_carpark_history`)
+    instead of LIMIT/OFFSET -- OFFSET cost is proportional to depth, which
+    made a full walk of a multi-million-row table roughly O(n^2) in
+    scanned rows and pushed the weekly job past its timeout."""
+
+    def test_first_page_has_no_or_filter_and_orders_on_both_columns(
+        self, make_routed_transport: RoutedTransportFactory
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["query"] = str(request.url.params)
+            return _json_response([{"polled_at": "t1", "carpark_id": "1"}])
+
+        client = SupabaseREST(
+            "https://xyz.supabase.co", "key", transport=make_routed_transport(handler)
+        )
+        rows = client.select_all(
+            "carpark_history", page_size=5, keyset_columns=("polled_at", "carpark_id"),
+        )
+
+        assert rows == [{"polled_at": "t1", "carpark_id": "1"}]
+        query = str(captured["query"])
+        assert "order=polled_at.asc%2Ccarpark_id.asc" in query or (
+            "order=polled_at.asc,carpark_id.asc" in query
+        )
+        assert "or=" not in query
+        assert "offset" not in query
+
+    def test_second_page_seeks_strictly_after_last_row_via_or_and_filter(
+        self, make_routed_transport: RoutedTransportFactory
+    ) -> None:
+        page1 = [
+            {"polled_at": "2026-07-05T00:00:00+00:00", "carpark_id": "1"},
+            {"polled_at": "2026-07-05T00:00:00+00:00", "carpark_id": "2"},
+        ]
+        page2 = [{"polled_at": "2026-07-05T00:05:00+00:00", "carpark_id": "1"}]  # short -> stop
+        captured_filters: list[str | None] = []
+        pages = [page1, page2]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured_filters.append(request.url.params.get("or"))
+            return _json_response(pages.pop(0))
+
+        client = SupabaseREST(
+            "https://xyz.supabase.co", "key", transport=make_routed_transport(handler)
+        )
+
+        rows = client.select_all(
+            "carpark_history", page_size=2, keyset_columns=("polled_at", "carpark_id"),
+        )
+
+        assert rows == page1 + page2
+        # First page: no seek filter at all.
+        assert captured_filters[0] is None
+        # Second page: seeks strictly after the last row of page 1
+        # (polled_at="...00:00:00", carpark_id="2") -- neither re-fetching
+        # carpark "2" at that timestamp nor skipping a carpark that could
+        # share the exact same polled_at.
+        assert captured_filters[1] == (
+            "(polled_at.gt.2026-07-05T00:00:00+00:00,"
+            "and(polled_at.eq.2026-07-05T00:00:00+00:00,carpark_id.gt.2))"
+        )
+
+    def test_resuming_from_a_cursor_seeks_from_there_not_the_beginning(
+        self, make_routed_transport: RoutedTransportFactory
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["or"] = request.url.params.get("or")
+            return _json_response([])
+
+        client = SupabaseREST(
+            "https://xyz.supabase.co", "key", transport=make_routed_transport(handler)
+        )
+        client.select_all(
+            "carpark_history",
+            page_size=1000,
+            keyset_columns=("polled_at", "carpark_id"),
+            keyset_cursor=("2026-07-05T00:00:00+00:00", "42"),
+        )
+
+        assert captured["or"] == (
+            "(polled_at.gt.2026-07-05T00:00:00+00:00,"
+            "and(polled_at.eq.2026-07-05T00:00:00+00:00,carpark_id.gt.42))"
+        )
+
+    def test_no_skip_or_double_process_across_the_resume_boundary(
+        self, make_sequential_transport: SequentialTransportFactory
+    ) -> None:
+        """A resumed walk (keyset_cursor set) must pick up exactly where a
+        prior walk's on_page callback last recorded, not skip a row or
+        reprocess the cursor row itself."""
+        all_rows = [
+            {"polled_at": f"2026-07-05T00:0{i}:00+00:00", "carpark_id": "1"} for i in range(5)
+        ]
+        # Simulate: a first "attempt" already processed rows 0-2 (cursor is
+        # row 2's key); the resumed attempt should fetch exactly rows 3-4.
+        remaining = all_rows[3:]
+        transport = make_sequential_transport([_json_response(remaining)])
+        client = SupabaseREST("https://xyz.supabase.co", "key", transport=transport)
+
+        rows = client.select_all(
+            "carpark_history",
+            page_size=10,
+            keyset_columns=("polled_at", "carpark_id"),
+            keyset_cursor=(all_rows[2]["polled_at"], all_rows[2]["carpark_id"]),
+        )
+
+        assert rows == all_rows[3:]  # neither row 2 (double-process) nor a gap (skip)
+
+    def test_on_page_callback_fires_with_each_page_for_cursor_persistence(
+        self, make_sequential_transport: SequentialTransportFactory
+    ) -> None:
+        page1 = [
+            {"polled_at": "2026-07-05T00:00:00+00:00", "carpark_id": "1"},
+            {"polled_at": "2026-07-05T00:01:00+00:00", "carpark_id": "1"},
+        ]
+        page2 = [{"polled_at": "2026-07-05T00:02:00+00:00", "carpark_id": "1"}]  # short -> stop
+        transport = make_sequential_transport([_json_response(page1), _json_response(page2)])
+        client = SupabaseREST("https://xyz.supabase.co", "key", transport=transport)
+        seen_pages: list[list[dict[str, object]]] = []
+
+        client.select_all(
+            "carpark_history",
+            page_size=2,
+            keyset_columns=("polled_at", "carpark_id"),
+            on_page=seen_pages.append,
+        )
+
+        assert seen_pages == [page1, page2]
+
+    def test_default_offset_pagination_is_unchanged_when_keyset_columns_omitted(
+        self, make_sequential_transport: SequentialTransportFactory
+    ) -> None:
+        """Backward-compat guard: callers that don't opt into keyset
+        pagination (every table but `carpark_history`) must keep getting
+        the exact same LIMIT/OFFSET behavior as before."""
+        page1 = [{"i": i} for i in range(3)]
+        page2 = [{"i": i} for i in range(3, 5)]
+        transport = make_sequential_transport([_json_response(page1), _json_response(page2)])
+        client = SupabaseREST("https://xyz.supabase.co", "key", transport=transport)
+
+        rows = client.select_all("carpark_baseline", page_size=3)
+
+        assert rows == page1 + page2
+
+
 class TestInsert:
     """Tests for SupabaseREST.insert (plain POST, training_runs)."""
 

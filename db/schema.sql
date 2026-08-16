@@ -798,3 +798,62 @@ create policy demo_reader_select
     on public.carpark_baseline for select
     to demo_reader
     using (true);
+
+-- ----------------------------------------------------------------------------
+-- 12) carpark_history_walk_cursor -- resume point for the weekly training
+--     job's carpark_history walk (keyset pagination crash recovery)
+-- ----------------------------------------------------------------------------
+-- training/src/gotparking_training/supabase_rest.py's select_all switched
+-- carpark_history pagination from LIMIT/OFFSET to keyset seeking on
+-- (polled_at, carpark_id) -- OFFSET cost is proportional to depth, so a full
+-- walk over a multi-million-row table cost roughly O(n^2) in scanned rows and
+-- pushed the weekly job past its 30-minute timeout (captain-verified against
+-- production via EXPLAIN ANALYZE: the same page at offset 2,387,000 took
+-- 10,220ms with OFFSET vs 3.3ms with keyset, using the existing single-column
+-- carpark_history_polled_at_idx index -- no new index needed).
+--
+-- This table is a separate, smaller layer on top of that fix: if a run gets
+-- killed mid-walk (timeout, crash, anything), the next invocation resumes
+-- the keyset walk from here instead of re-walking the whole table from the
+-- beginning. Same singleton-row pattern as model_config (section 6). This is
+-- NOT a permanent incrementally-advancing cursor -- the job does a full
+-- fresh table walk every week for training; this row's only job is
+-- surviving an interrupted walk within/across attempts at that SAME walk.
+-- data_loading.load_carpark_history writes it after every successfully
+-- fetched page and clears it once a walk completes, so the following week's
+-- fresh walk always starts from the beginning again.
+create table if not exists public.carpark_history_walk_cursor (
+    singleton   boolean primary key default true check (singleton),
+    -- Raw values from the last successfully processed carpark_history row,
+    -- exactly as PostgREST returned them (fed back verbatim as the next
+    -- keyset filter's comparison values). Both null = no walk in progress.
+    polled_at   timestamptz,
+    carpark_id  text,
+    updated_at  timestamptz not null default now()
+);
+
+comment on table public.carpark_history_walk_cursor is
+    'Single row (PK forces it). Resume point for an interrupted carpark_history '
+    'keyset walk within the current weekly training cycle -- cleared on successful '
+    'completion, not a running incremental cursor.';
+
+insert into public.carpark_history_walk_cursor (singleton, polled_at, carpark_id)
+values (true, null, null)
+on conflict (singleton) do nothing;
+
+alter table public.carpark_history_walk_cursor enable row level security;
+revoke all on table public.carpark_history_walk_cursor from anon, authenticated;
+
+-- MANUAL STEP: like every section in this file (see the file header), this
+-- only exists in source until someone pastes it (or the whole file) into the
+-- Supabase SQL Editor and Runs it against the production project. THIS ONE
+-- IS ORDER-SENSITIVE: apply it BEFORE deploying the training code change
+-- that reads/writes this table (repository.load_carpark_history_walk_cursor
+-- / save_carpark_history_walk_cursor / clear_carpark_history_walk_cursor).
+-- Unlike demo/'s typed-503 degradation, training has no graceful fallback
+-- for a missing table by design (supabase_rest.py's documented contract:
+-- every Supabase read/write failure either retries-then-raises
+-- SupabaseUnavailableError or propagates as a crash) -- until this section
+-- is applied, the very first cursor read in a training run fails PostgREST's
+-- schema-cache lookup, retries once, then raises SupabaseUnavailableError
+-- and fails the entire weekly run.

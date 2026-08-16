@@ -16,6 +16,7 @@ from gotparking_training.data_loading import (
 )
 from gotparking_training.repository import CarparkInfo
 from gotparking_training.series import TimedSample
+from gotparking_training.supabase_rest import parse_timestamp
 from tests.fakes import FakeSupabaseDB, make_history_rows
 
 _NOW = datetime(2026, 7, 6, 5, 0, tzinfo=timezone.utc)
@@ -29,7 +30,7 @@ class TestLoadCarparkHistory:
         rows_2 = make_history_rows("2", 3, _NOW - timedelta(hours=1), timedelta(minutes=5))
         db = FakeSupabaseDB(tables={"carpark_history": rows_1 + rows_2})
 
-        history = load_carpark_history(db)
+        history = load_carpark_history(db, _NOW)
 
         assert set(history) == {"1", "2"}
         assert len(history["1"]) == 5
@@ -38,7 +39,7 @@ class TestLoadCarparkHistory:
 
     def test_empty_table_returns_empty_dict(self) -> None:
         db = FakeSupabaseDB(tables={"carpark_history": []})
-        assert load_carpark_history(db) == {}
+        assert load_carpark_history(db, _NOW) == {}
 
     def test_paginates_using_select_all_page_size(self) -> None:
         # FakeSupabaseDB.select_all ignores page_size (returns everything in
@@ -48,9 +49,68 @@ class TestLoadCarparkHistory:
         rows = make_history_rows("1", 10, _NOW - timedelta(days=1), timedelta(minutes=5))
         db = FakeSupabaseDB(tables={"carpark_history": rows})
 
-        load_carpark_history(db)
+        load_carpark_history(db, _NOW)
 
         assert any(table == "carpark_history" for table, _ in db.select_calls)
+
+
+class TestLoadCarparkHistoryWalkCursor:
+    """Crash-recovery cursor: resume from a persisted cursor, write it
+    forward per page, clear it on completion."""
+
+    def test_no_cursor_processes_every_row(self) -> None:
+        rows = make_history_rows("1", 3, _NOW - timedelta(days=1), timedelta(minutes=5))
+        db = FakeSupabaseDB(tables={"carpark_history": rows})
+
+        history = load_carpark_history(db, _NOW)
+
+        assert len(history["1"]) == 3
+
+    def test_resumes_after_persisted_cursor_without_reprocessing_earlier_rows(self) -> None:
+        rows = make_history_rows("1", 5, _NOW - timedelta(days=1), timedelta(minutes=5))
+        db = FakeSupabaseDB(
+            tables={
+                "carpark_history": rows,
+                "carpark_history_walk_cursor": [
+                    {"singleton": True, "polled_at": rows[2]["polled_at"], "carpark_id": "1"}
+                ],
+            }
+        )
+
+        history = load_carpark_history(db, _NOW)
+
+        # Only the 2 rows strictly after the cursor are (re-)processed --
+        # the resume boundary neither skips a row nor reprocesses the
+        # cursor row itself.
+        assert len(history["1"]) == 2
+        assert history["1"][0].at == parse_timestamp(rows[3]["polled_at"])
+        assert history["1"][1].at == parse_timestamp(rows[4]["polled_at"])
+
+    def test_writes_cursor_forward_after_a_successful_page(self) -> None:
+        rows = make_history_rows("1", 3, _NOW - timedelta(days=1), timedelta(minutes=5))
+        db = FakeSupabaseDB(tables={"carpark_history": rows})
+
+        load_carpark_history(db, _NOW)
+
+        cursor_writes = [u for u in db.updated if u[0] == "carpark_history_walk_cursor"]
+        # save (page written) then clear (walk completed) -- in that order.
+        assert len(cursor_writes) == 2
+        _, save_params, save_patch = cursor_writes[0]
+        assert save_params == {"singleton": "eq.true"}
+        assert save_patch["polled_at"] == rows[-1]["polled_at"]
+        assert save_patch["carpark_id"] == "1"
+
+    def test_clears_cursor_once_the_walk_completes_successfully(self) -> None:
+        rows = make_history_rows("1", 3, _NOW - timedelta(days=1), timedelta(minutes=5))
+        db = FakeSupabaseDB(tables={"carpark_history": rows})
+
+        load_carpark_history(db, _NOW)
+
+        cursor_writes = [u for u in db.updated if u[0] == "carpark_history_walk_cursor"]
+        _, clear_params, clear_patch = cursor_writes[-1]
+        assert clear_params == {"singleton": "eq.true"}
+        assert clear_patch["polled_at"] is None
+        assert clear_patch["carpark_id"] is None
 
 
 class TestComputeHistoryStats:
