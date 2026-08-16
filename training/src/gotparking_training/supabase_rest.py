@@ -13,7 +13,12 @@ Every call retries exactly once on failure (network error or non-2xx
 status) before raising :class:`SupabaseUnavailableError`, matching the
 "Supabase read/write failure: retry once, then /fail ping" contract
 (design doc Failure Modes registry; Test Requirements training section,
-case 6/14).
+case 6/14). `select_all`'s pagination loop layers an additional
+retry-with-backoff budget on top of this, per page (see
+`POSTGREST_PAGE_MAX_ATTEMPTS`): `carpark_history` has grown past 1.7M
+rows, and at deep offsets PostgREST intermittently returns a transient
+500, so a full pagination run needs more resilience than any single
+one-shot call elsewhere in this client.
 
 Tests inject an ``httpx.MockTransport`` instead of hitting the network --
 httpx's own built-in test seam, so no extra mocking library is needed.
@@ -22,6 +27,7 @@ httpx's own built-in test seam, so no extra mocking library is needed.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,7 +35,11 @@ from typing import Any, Protocol, runtime_checkable
 
 import httpx
 
-from gotparking_training.config import POSTGREST_PAGE_SIZE
+from gotparking_training.config import (
+    POSTGREST_PAGE_MAX_ATTEMPTS,
+    POSTGREST_PAGE_RETRY_BASE_SECONDS,
+    POSTGREST_PAGE_SIZE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +291,8 @@ class SupabaseREST:
         *,
         params: dict[str, Any] | None = None,
         page_size: int = POSTGREST_PAGE_SIZE,
+        page_max_attempts: int = POSTGREST_PAGE_MAX_ATTEMPTS,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> list[dict[str, Any]]:
         """Select every row matching ``params``, paginating as needed.
 
@@ -289,12 +301,23 @@ class SupabaseREST:
         before a single weekly training cycle's dataset stops growing, so
         callers must page through results rather than silently truncating.
 
+        Each page fetch gets its own retry-with-backoff budget
+        (`page_max_attempts`, on top of `select()`'s own single retry) --
+        a full pagination run over a multi-million-row table makes
+        thousands of page requests, so a transient failure at some offset
+        is far more likely to occur at least once than it is for any
+        single one-shot Supabase call elsewhere in this codebase.
+
         Args:
             table: Table name.
             params: PostgREST query params (filters, select, order). Any
                 `limit`/`offset` keys are overwritten by the pagination
                 loop.
             page_size: Rows requested per page.
+            page_max_attempts: Max attempts per page fetch before giving up
+                and letting `SupabaseUnavailableError` propagate.
+            sleep: Backoff sleep function, injected so tests don't wait on
+                real time; defaults to `time.sleep`.
 
         Returns:
             The concatenation of every page's rows.
@@ -306,12 +329,52 @@ class SupabaseREST:
             page_params = dict(base_params)
             page_params["limit"] = page_size
             page_params["offset"] = offset
-            result = self.select(table, params=page_params)
+            result = self._select_page_with_backoff(
+                table, page_params, max_attempts=page_max_attempts, sleep=sleep
+            )
             all_rows.extend(result.rows)
             if len(result.rows) < page_size:
                 break
             offset += page_size
         return all_rows
+
+    def _select_page_with_backoff(
+        self,
+        table: str,
+        params: dict[str, Any],
+        *,
+        max_attempts: int,
+        sleep: Callable[[float], None],
+    ) -> SelectResult:
+        """Fetch one `select_all` page, retrying transient failures with backoff.
+
+        Args:
+            table: Table name.
+            params: Page query params (already includes limit/offset).
+            max_attempts: Total attempts before giving up (>= 1).
+            sleep: Backoff sleep function.
+
+        Returns:
+            The successful SelectResult.
+
+        Raises:
+            SupabaseUnavailableError: If every attempt fails.
+        """
+        delay = POSTGREST_PAGE_RETRY_BASE_SECONDS
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self.select(table, params=params)
+            except SupabaseUnavailableError:
+                if attempt == max_attempts:
+                    raise
+                logger.warning(
+                    "select_all %s page (offset=%s) failed on attempt %d/%d; "
+                    "retrying in %.1fs",
+                    table, params.get("offset"), attempt, max_attempts, delay,
+                )
+                sleep(delay)
+                delay *= 2
+        raise AssertionError("unreachable: loop always returns or raises")
 
     def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
         """Insert rows via PostgREST (plain POST, no upsert resolution).

@@ -125,6 +125,49 @@ class TestSelectAll:
 
         assert rows == page1
 
+    def test_page_survives_transient_failure_via_backoff_retry(
+        self, make_sequential_transport: SequentialTransportFactory
+    ) -> None:
+        # A deep-offset page: both of select()'s own attempts hit a
+        # transient 500 (matching the real carpark_history failure), which
+        # would normally propagate as SupabaseUnavailableError. select_all's
+        # page-level backoff retry gets a fresh pair of attempts and
+        # succeeds on the first one.
+        page1 = [{"i": i} for i in range(3)]
+        page2 = [{"i": 3}]  # short page -> stop
+        transport = make_sequential_transport(
+            [
+                _json_response({"error": "server error"}, status=500),
+                _json_response({"error": "server error"}, status=500),
+                _json_response(page1),
+                _json_response(page2),
+            ]
+        )
+        client = SupabaseREST("https://xyz.supabase.co", "key", transport=transport)
+        sleeps: list[float] = []
+
+        rows = client.select_all("carpark_history", page_size=3, sleep=sleeps.append)
+
+        assert rows == page1 + page2
+        assert sleeps == [1.0]
+
+    def test_page_retry_budget_exhausted_raises_supabase_unavailable(
+        self, make_sequential_transport: SequentialTransportFactory
+    ) -> None:
+        # page_max_attempts=2 page-level attempts, each burning select()'s
+        # own built-in retry (2 raw requests) -> 4 straight 500s exhausts
+        # the whole budget and the error propagates, exactly like the
+        # crash in the real failed training runs.
+        transport = make_sequential_transport(
+            [_json_response({"error": "server error"}, status=500)] * 4
+        )
+        client = SupabaseREST("https://xyz.supabase.co", "key", transport=transport)
+
+        with pytest.raises(SupabaseUnavailableError):
+            client.select_all(
+                "carpark_history", page_size=3, page_max_attempts=2, sleep=lambda _: None
+            )
+
 
 class TestInsert:
     """Tests for SupabaseREST.insert (plain POST, training_runs)."""
