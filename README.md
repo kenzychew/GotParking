@@ -9,6 +9,19 @@ The forecasting model is classical predictive ML: a LightGBM regressor pretraine
 The first promoted model had to beat both a historical-average baseline and a persistence baseline by a wide margin; every retrain since is gated against the currently-serving model instead, promoting unless it regresses MAE by more than 2%.
 The first promoted model went live on 2026-07-11 and every covered carpark now serves real ML forecasts; during the initial cold-start window the app served live counts with forecasts marked as warming up, never a fabricated number.
 
+## Results
+
+Historical-average and persistence are two different baselines with different difficulty, so results are reported against both rather than one blended number. Numbers below are read directly from the GitHub Actions `train.yml` run logs for each promotion, not recomputed for this table.
+
+| Model | Promoted | Baseline type | Baseline MAE | Model MAE |
+| --- | --- | --- | --- | --- |
+| `lgbm_20260711_215006` (first promotion) | 2026-07-11 | historical-average | 218.93 | 16.63 |
+| `lgbm_20260711_215006` (first promotion) | 2026-07-11 | persistence | 21.44 | 16.63 |
+| `lgbm_20260801_215623` (currently serving) | 2026-08-01 | historical-average | 14.66 | 6.43 |
+| `lgbm_20260801_215623` (currently serving) | 2026-08-01 | persistence | 6.29 | 6.43 |
+
+The first promotion beat both baselines by a wide margin. The currently-serving model still beats the historical-average baseline by more than half, but trails the persistence baseline by about 2%. That is the expected result of gating retrains against the incumbent instead of against baselines: a candidate can promote as long as it does not regress more than 2% MAE from the prior model, even if that leaves it slightly behind persistence for that week's traffic pattern.
+
 ## Data sources
 
 - [LTA DataMall](https://datamall.lta.gov.sg/) - live carpark availability, polled every 5 minutes.
@@ -49,7 +62,7 @@ training (GitHub Actions, weekly) --> trains LightGBM on accumulated polls
 
 ## Development
 
-Each lane has its own test suite (528 tests total across the five lanes as of 2026-07-17, all green, ruff and mypy clean on the Python lanes):
+Each lane has its own test suite (535 tests total across the five lanes as of 2026-08-17, all green, ruff and mypy clean on the Python lanes):
 
 ```bash
 (cd poller && npx vitest run)
