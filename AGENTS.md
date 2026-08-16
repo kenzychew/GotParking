@@ -97,6 +97,13 @@ here so they aren't silently dropped, but are NOT automated by /land-and-deploy.
   sense — `.github/workflows/train.yml` runs on its own weekly schedule
   (`0 21 * * 6`) once pushed to `main`; there's nothing to health-check beyond
   the healthchecks.io training ping (Premise #8) and the `training_runs` table.
+  `carpark_history` is large and growing (polled every 5 min across all
+  active carparks) and PostgREST can return a transient 500 at deep
+  `OFFSET`s; `SupabaseREST.select_all` (`training/src/gotparking_training/
+  supabase_rest.py`) carries its own per-page retry-with-backoff budget on
+  top of the client's single-retry contract for exactly this reason — see
+  that file's module docstring before changing pagination or retry
+  behavior there.
 - **GitHub Actions workflow_dispatch (`.github/workflows/regen-seed-lists.yml`,
   added 2026-07-08):** manually triggered only (no schedule) — runs
   `scripts/regen_seed_lists.py` and opens a PR via `peter-evans/create-pull-request`

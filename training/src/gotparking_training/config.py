@@ -50,6 +50,22 @@ MODEL_STORAGE_BUCKET = "models"
 #: hold hundreds of thousands of rows well past any default per-request cap.
 POSTGREST_PAGE_SIZE = 1000
 
+#: `select_all`'s page-fetch retry budget, on top of `select()`'s own
+#: built-in single retry. `carpark_history` has grown past 1.7M rows (268
+#: carparks polled every 5 minutes); at deep offsets PostgREST has been
+#: observed intermittently returning a transient 500, and a single
+#: pagination run makes thousands of page requests, so the odds of hitting
+#: at least one transient failure over a full run are much higher than for
+#: any other single Supabase call in this codebase. This extra layer of
+#: retries-with-backoff is scoped to `select_all`'s page loop specifically;
+#: it does not change the single-retry contract every other Supabase call
+#: (select, insert, update, upsert, storage) relies on.
+POSTGREST_PAGE_MAX_ATTEMPTS = 5
+
+#: Base backoff delay (seconds) between `select_all` page-fetch retries,
+#: doubling each attempt (1s, 2s, 4s, 8s).
+POSTGREST_PAGE_RETRY_BASE_SECONDS = 1.0
+
 # --- Training-only tunables ------------------------------------------------
 
 #: Holdout window: the most recent N days of live data are held out for the
