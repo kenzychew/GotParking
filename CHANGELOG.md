@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.2.1.0 - 2026-07-09
+
+Coverage grows from 24 to 268 Singapore carparks, taking every clean candidate left in the
+full LTA feed instead of the smaller sub-wave originally planned.
+
+- **244 new carparks verified and live**: the rest of the LTA `CarParkAvailabilityv2` feed
+  (mostly HDB, plus other non-mall carparks), matched directly against the live feed itself
+  since there was no external mall dataset to cross-reference this time (`scripts/recon_full_feed.py`).
+  Of 359 candidates observed over a real 6-hour polling window, 244 verified and 115 rejected
+  for insufficient lot-count variance, the same `MIN_MEANINGFUL_RANGE >= 20` gate used for
+  every prior wave.
+- **Carpark IDs are no longer all-numeric.** LTA's real `CarParkID` scheme also uses
+  area-letter-prefixed alphanumeric IDs (e.g. `A0007`), already supported natively by
+  `carparks.carpark_id text`; `scripts/regen_seed_lists.py` needed a fix to stop assuming
+  digits-only IDs.
+- No SINPA mapping for this wave, same as the mall wave: `sinpa_index` null for all 244 rows.
+- Scope decision made explicitly this session, superseding the earlier CEO-review cap to a
+  50-100 carpark sub-wave: aggressive coverage was called the goal now, so all 359 clean
+  candidates were signed off in one pass rather than split into batches.
+
 ## v0.2.0.0 - 2026-07-08
 
 Coverage grows from 10 to 24 Singapore malls — search any of them at

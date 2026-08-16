@@ -31,9 +31,10 @@ Supabase directly; it reads the cached public forecast endpoint.
 
 1. Complete provisioning checklist Phase 2 (project in `ap-southeast-1`).
 2. Supabase dashboard -> SQL Editor -> paste all of `schema.sql` -> Run.
-3. Table Editor should show 7 tables; `carparks` has 24 rows (10 original seed + 14
-   coverage-expansion mall carparks, as of 2026-07-08); `model_config` has 1 row with
-   `active_model_version` null (baseline-only serving until the first promotion).
+3. Table Editor should show 7 tables; `carparks` has 268 rows (10 original seed + 14
+   wave-1 mall carparks from 2026-07-08 + 244 wave-2 full-LTA-feed carparks from
+   2026-07-09, as of 2026-08-17); `model_config` has 1 row with `active_model_version`
+   null (baseline-only serving until the first promotion).
 
 Note: `schema.sql` also creates the private `models` bucket (section 9), so if you ran it
 before doing the checklist's manual bucket step, that step is already satisfied --
