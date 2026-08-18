@@ -9,20 +9,59 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
 from gotparking_training.cold_start import is_cold_start
-from gotparking_training.repository import CarparkInfo
+from gotparking_training.repository import (
+    CarparkInfo,
+    clear_carpark_history_walk_cursor,
+    load_carpark_history_walk_cursor,
+    save_carpark_history_walk_cursor,
+)
 from gotparking_training.series import TimedSample
 from gotparking_training.supabase_rest import SupabaseClient, parse_timestamp
 
 logger = logging.getLogger(__name__)
 
+#: Seek/keyset sort key for `carpark_history`'s paginated load below.
+#: `polled_at` alone is not unique (multiple carparks can land on the same
+#: or very close timestamps), so `carpark_id` disambiguates ties at page
+#: boundaries -- see `SupabaseREST.select_all`'s `keyset_columns` doc.
+_HISTORY_KEYSET_COLUMNS = ("polled_at", "carpark_id")
 
-def load_carpark_history(db: SupabaseClient) -> dict[str, list[TimedSample]]:
+
+def load_carpark_history(db: SupabaseClient, now: datetime) -> dict[str, list[TimedSample]]:
     """Load every `carpark_history` row, paginated, grouped by carpark.
+
+    Paginates via keyset seeking on `(polled_at, carpark_id)`, not
+    LIMIT/OFFSET (OFFSET cost is proportional to depth, which made a full
+    walk of this multi-million-row table roughly O(n^2) in scanned rows
+    and pushed the weekly job past its timeout).
+
+    Crash recovery: reads a persisted walk cursor
+    (`repository.load_carpark_history_walk_cursor`) before starting and,
+    if one exists from a previous interrupted walk THIS cycle, resumes
+    the keyset fetch from there instead of re-walking the whole table.
+    The cursor is written forward after every successfully fetched page
+    (`repository.save_carpark_history_walk_cursor`), so a crash between
+    pages loses at most one page's rows, and cleared once the full walk
+    completes (`repository.clear_carpark_history_walk_cursor`) so next
+    week's fresh walk starts from the beginning again. See
+    `db/schema.sql`'s `carpark_history_walk_cursor` section for the
+    schema and its manual-apply note.
+
+    Note: a resumed walk's returned rows cover only `keyset_cursor`
+    onward -- rows from before the cursor that a prior, crashed attempt
+    already fetched are not recovered (that attempt's in-memory state is
+    gone). The cursor trades a small amount of this-cycle data
+    completeness for not re-walking a multi-million-row table over the
+    network on every retry; a resume only happens after a run was already
+    interrupted, and the very next week's walk starts fresh regardless.
 
     Args:
         db: Supabase client.
+        now: The training run's start instant, recorded on each persisted
+            cursor write as `updated_at`.
 
     Returns:
         A dict mapping carpark_id -> its list of TimedSample readings (not
@@ -31,15 +70,31 @@ def load_carpark_history(db: SupabaseClient) -> dict[str, list[TimedSample]]:
         zero rows simply does not appear as a key here; callers should
         treat a missing key the same as an empty list.
     """
+    cursor = load_carpark_history_walk_cursor(db)
+    if cursor is not None:
+        logger.warning(
+            "resuming carpark_history walk from persisted cursor "
+            "polled_at=%s carpark_id=%s (a previous walk this cycle was interrupted)",
+            cursor[0], cursor[1],
+        )
+
+    def _on_page(page_rows: list[dict[str, Any]]) -> None:
+        last = page_rows[-1]
+        save_carpark_history_walk_cursor(db, last["polled_at"], last["carpark_id"], now)
+
     rows = db.select_all(
         "carpark_history",
-        params={"select": "carpark_id,polled_at,available_lots", "order": "polled_at.asc"},
+        params={"select": "carpark_id,polled_at,available_lots"},
+        keyset_columns=_HISTORY_KEYSET_COLUMNS,
+        keyset_cursor=cursor,
+        on_page=_on_page,
     )
     by_carpark: dict[str, list[TimedSample]] = {}
     for row in rows:
         by_carpark.setdefault(row["carpark_id"], []).append(
             TimedSample(parse_timestamp(row["polled_at"]), float(row["available_lots"]))
         )
+    clear_carpark_history_walk_cursor(db, now)
     logger.info(
         "load_carpark_history: loaded %d rows across %d carparks", len(rows), len(by_carpark)
     )

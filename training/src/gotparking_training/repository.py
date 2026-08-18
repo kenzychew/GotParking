@@ -148,6 +148,76 @@ def promote_model_config(
     )
 
 
+def load_carpark_history_walk_cursor(db: SupabaseClient) -> tuple[str, str] | None:
+    """Load the persisted `carpark_history_walk_cursor` singleton row.
+
+    See `db/schema.sql`'s `carpark_history_walk_cursor` section: this is a
+    resume point for an interrupted `carpark_history` keyset walk within
+    the current weekly training cycle, not a permanent incrementally
+    -advancing cursor -- `data_loading.load_carpark_history` clears it once
+    a walk completes successfully.
+
+    Args:
+        db: Supabase client.
+
+    Returns:
+        `(polled_at, carpark_id)` exactly as PostgREST returned them for
+        the last row a previous, interrupted walk successfully processed
+        (raw strings, not reparsed, so they round-trip unchanged as a
+        keyset filter value), or None if no walk is currently in progress
+        (the singleton row's cursor columns are null, or the row itself is
+        somehow missing).
+    """
+    result = db.select(
+        "carpark_history_walk_cursor", params={"select": "polled_at,carpark_id", "limit": "1"}
+    )
+    if not result.rows:
+        return None
+    row = result.rows[0]
+    polled_at = row.get("polled_at")
+    carpark_id = row.get("carpark_id")
+    if polled_at is None or carpark_id is None:
+        return None
+    return (polled_at, carpark_id)
+
+
+def save_carpark_history_walk_cursor(
+    db: SupabaseClient, polled_at: str, carpark_id: str, now: datetime,
+) -> None:
+    """Persist `(polled_at, carpark_id)` as the in-progress walk cursor.
+
+    Called after every successfully fetched `carpark_history` page (see
+    `data_loading.load_carpark_history`), so a crash between pages loses
+    at most one page of progress, not the whole walk.
+
+    Args:
+        db: Supabase client.
+        polled_at: The raw `polled_at` string exactly as PostgREST
+            returned it for the last successfully processed row.
+        carpark_id: That row's carpark_id.
+        now: The write instant, recorded as `updated_at`.
+    """
+    db.update(
+        "carpark_history_walk_cursor",
+        params={"singleton": "eq.true"},
+        patch={"polled_at": polled_at, "carpark_id": carpark_id, "updated_at": now.isoformat()},
+    )
+
+
+def clear_carpark_history_walk_cursor(db: SupabaseClient, now: datetime) -> None:
+    """Clear the walk cursor after a `carpark_history` walk completes.
+
+    Args:
+        db: Supabase client.
+        now: The write instant, recorded as `updated_at`.
+    """
+    db.update(
+        "carpark_history_walk_cursor",
+        params={"singleton": "eq.true"},
+        patch={"polled_at": None, "carpark_id": None, "updated_at": now.isoformat()},
+    )
+
+
 def insert_training_run(
     db: SupabaseClient,
     *,

@@ -98,12 +98,25 @@ here so they aren't silently dropped, but are NOT automated by /land-and-deploy.
   (`0 21 * * 6`) once pushed to `main`; there's nothing to health-check beyond
   the healthchecks.io training ping (Premise #8) and the `training_runs` table.
   `carpark_history` is large and growing (polled every 5 min across all
-  active carparks) and PostgREST can return a transient 500 at deep
-  `OFFSET`s; `SupabaseREST.select_all` (`training/src/gotparking_training/
-  supabase_rest.py`) carries its own per-page retry-with-backoff budget on
-  top of the client's single-retry contract for exactly this reason — see
-  that file's module docstring before changing pagination or retry
-  behavior there.
+  active carparks); `SupabaseREST.select_all` (`training/src/
+  gotparking_training/supabase_rest.py`) carries its own per-page
+  retry-with-backoff budget on top of the client's single-retry contract,
+  since a full pagination run makes thousands of page requests and a
+  transient PostgREST 500 is far more likely to hit at least one than any
+  single one-shot call elsewhere. `carpark_history`'s pagination itself
+  uses keyset (seek) pagination ordered on `(polled_at, carpark_id)`, not
+  `LIMIT`/`OFFSET` — OFFSET cost is proportional to depth (confirmed via
+  `EXPLAIN ANALYZE` against production: 10,220ms at offset 2,387,000 vs
+  3.3ms for the equivalent keyset query, same existing
+  `carpark_history_polled_at_idx` index), which made a full table walk
+  roughly O(n^2) in scanned rows and pushed the weekly job past its
+  30-minute timeout. `data_loading.load_carpark_history` also
+  reads/writes/clears a persisted `carpark_history_walk_cursor` singleton
+  row (`db/schema.sql` section 12, manual-apply like every other section
+  there) so a killed/timed-out run's next invocation resumes the walk
+  instead of restarting from the beginning — see `select_all`'s and
+  `load_carpark_history`'s docstrings before changing pagination, retry,
+  or resume behavior there.
 - **GitHub Actions workflow_dispatch (`.github/workflows/regen-seed-lists.yml`,
   added 2026-07-08):** manually triggered only (no schedule) — runs
   `scripts/regen_seed_lists.py` and opens a PR via `peter-evans/create-pull-request`

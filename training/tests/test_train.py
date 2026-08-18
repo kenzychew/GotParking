@@ -307,7 +307,7 @@ class TestFailsEitherComparatorDoesNotPromote:
 
         assert result.phase == PHASE_FIRST_PROMOTION
         assert result.promoted is False
-        assert db.updated == []
+        assert not any(t == "model_config" for t, _, _ in db.updated)
         assert db.upload_calls == []
         assert db.inserted["training_runs"][0]["promoted"] is False
 
@@ -389,7 +389,7 @@ class TestPhaseTwoRetrainWiring:
         assert result.mae_candidate is not None
         assert result.mae_incumbent is not None
         assert result.mae_candidate > 1.02 * result.mae_incumbent
-        assert db.updated == []
+        assert not any(t == "model_config" for t, _, _ in db.updated)
         assert db.upload_calls == []
 
 
@@ -446,7 +446,7 @@ class TestStorageUploadFailure:
             run(deps)
 
         assert fail_ping.reasons == [FAIL_REASON_MODEL_UPLOAD_FAILED]
-        assert db.updated == []  # model_config never flipped
+        assert not any(t == "model_config" for t, _, _ in db.updated)  # never flipped
         # A training_runs row is still inserted, not a silent skip.
         assert len(db.inserted["training_runs"]) == 1
         assert db.inserted["training_runs"][0]["promoted"] is False
