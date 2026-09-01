@@ -3,13 +3,23 @@
 Supabase schema and RLS posture (T2 in the design doc's Implementation Tasks).
 
 `schema.sql` is the whole schema: idempotent (safe to re-run), additive-only per the
-rollback posture. Seven tables -- `carparks` (seed whitelist + SINPA mapping),
+rollback posture. Eight tables -- `carparks` (seed whitelist + SINPA mapping),
 `carpark_history`, `carpark_baseline`, `carpark_momentum`, `carpark_forecast`,
-`model_config`, `training_runs` -- plus the private `models` Storage bucket and seed rows
-for the 10 originally-validated carparks (T2, 2026-07-04; see below for the Apply/Verify
-steps as they stood then). `carparks` and `training_runs` go beyond the design doc's
-literal T2 list; the header comment in `schema.sql` records why (whitelist/FK integrity +
-the Observability section's promotion history).
+`model_config`, `training_runs`, `carpark_history_walk_cursor` -- plus the private `models`
+Storage bucket and seed rows for the 10 originally-validated carparks (T2, 2026-07-04; see
+below for the Apply/Verify steps as they stood then). `carparks` and `training_runs` go
+beyond the design doc's literal T2 list; the header comment in `schema.sql` records why
+(whitelist/FK integrity + the Observability section's promotion history).
+
+**`carpark_history_walk_cursor` (section 12, added 2026-08-18) is order-sensitive and, as
+of 2026-09-01, not yet applied to production.** It's the crash-recovery singleton for the
+weekly training job's keyset walk over `carpark_history` (see the section's header comment
+in `schema.sql` for the full story). The training code that reads/writes it shipped in the
+same PR, and training has no fallback for a missing table by design -- every scheduled run
+since 2026-08-22 has crashed on the first cursor read with a 404, correctly firing the
+training dead-man's-switch on each failure. Applying this section to production (paste
+section 12 into the Supabase SQL Editor and run it) unblocks the next scheduled retrain;
+that apply itself is tracked separately, not part of this doc pass.
 
 **Schema evolution since T2 (2026-07-08, coverage expansion):** two additive columns --
 `carparks.is_original_seed` (`true` for the 10 T2 rows, `false` for anything added later) and
@@ -31,7 +41,7 @@ Supabase directly; it reads the cached public forecast endpoint.
 
 1. Complete provisioning checklist Phase 2 (project in `ap-southeast-1`).
 2. Supabase dashboard -> SQL Editor -> paste all of `schema.sql` -> Run.
-3. Table Editor should show 7 tables; `carparks` has 268 rows (10 original seed + 14
+3. Table Editor should show 8 tables; `carparks` has 268 rows (10 original seed + 14
    wave-1 mall carparks from 2026-07-08 + 244 wave-2 full-LTA-feed carparks from
    2026-07-09, as of 2026-08-17); `model_config` has 1 row with `active_model_version`
    null (baseline-only serving until the first promotion).

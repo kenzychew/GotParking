@@ -22,6 +22,8 @@ Historical-average and persistence are two different baselines with different di
 
 The first promotion beat both baselines by a wide margin. The currently-serving model still beats the historical-average baseline by more than half, but trails the persistence baseline by about 2%. That is the expected result of gating retrains against the incumbent instead of against baselines: a candidate can promote as long as it does not regress more than 2% MAE from the prior model, even if that leaves it slightly behind persistence for that week's traffic pattern.
 
+**Currently stale, disclosed rather than hidden:** the weekly retrain has failed every scheduled run since 2026-08-22 (`carpark_history_walk_cursor`, the crash-recovery table added alongside the keyset-pagination fix in #15, was never applied to production per `db/schema.sql`'s manual-apply steps -- an order-sensitive step that got missed). `lgbm_20260801_215623` is therefore still the model above and the one serving production as of 2026-09-01, unchanged for 31 days rather than continuously fine-tuned weekly as designed. This isn't a silent failure: each failed run correctly fired the training job's dead-man's-switch `/fail` ping, which is the safety net working as intended, not fixing the underlying gap. Fixing the migration itself is tracked separately, not folded into this doc pass.
+
 ## Data sources
 
 - [LTA DataMall](https://datamall.lta.gov.sg/) - live carpark availability, polled every 5 minutes.
@@ -62,7 +64,7 @@ training (GitHub Actions, weekly) --> trains LightGBM on accumulated polls
 
 ## Development
 
-Each lane has its own test suite (535 tests total across the five lanes as of 2026-08-17, all green, ruff and mypy clean on the Python lanes):
+Each lane has its own test suite (552 tests total across the five lanes as of 2026-09-01, all green, ruff and mypy clean on the Python lanes):
 
 ```bash
 (cd poller && npx vitest run)

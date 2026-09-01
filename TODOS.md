@@ -2,6 +2,29 @@
 
 ## Infrastructure
 
+### Apply `db/schema.sql` section 12 to production (training is broken without it)
+
+**What:** Paste section 12 (`carpark_history_walk_cursor`) into the Supabase SQL Editor
+for the production project and run it, same manual-apply step as every other schema
+section.
+
+**Why:** #15's keyset-pagination fix shipped 2026-08-18 reading/writing this table, but
+the table itself was never applied to production. Every scheduled weekly training run
+since 2026-08-22 has crashed on the first cursor read (404, then `SupabaseUnavailableError`
+per training's no-fallback-for-a-missing-table contract), correctly firing the training
+dead-man's-switch each time but never producing a new promotion. The currently-serving
+model (`lgbm_20260801_215623`) has been unchanged since 2026-08-01 as a result -- see
+`README.md`'s Results section and `db/README.md` for the live disclosure.
+
+**Context:** Found while auditing README numeric claims against live GitHub Actions run
+history and the production `/api/forecast` response (2026-09-01). Purely a missed manual
+step, not a code bug -- the fix already exists and is correct, it just was never applied
+in the order `db/schema.sql`'s own header comment calls for.
+
+**Effort:** S (one SQL Editor paste-and-run)
+**Priority:** P1 (blocks all retraining until applied)
+**Depends on:** None
+
 ### Add a regression test for the 4th training early-exit path
 
 **What:** `training/src/gotparking_training/train.py`'s `run()` has 4 early-exit paths that
